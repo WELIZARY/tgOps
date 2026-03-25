@@ -5,10 +5,11 @@
 # - Telegram бот -
 telegram:
   token: "YOUR_BOT_TOKEN_HERE"
-  # Список Telegram user_id, которым разрешён доступ к боту
-  # Первый в списке автоматически получает роль admin при первом /start
-  allowed_users:
-    - 123456789
+  # Telegram ID первого администратора.
+  # Используется только один раз: если таблица users пустая,
+  # этот пользователь вставляется в БД с ролью admin.
+  # Дальнейшее управление ролями - только через таблицу users.
+  initial_admin_id: 123456789
   # Режим получения обновлений: polling или webhook
   mode: "polling"
   # Настройки webhook (только если mode: webhook)

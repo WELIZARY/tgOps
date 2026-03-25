@@ -6,7 +6,7 @@ Telegram-бот для управления и мониторинга серве
 
 | Модуль | Статус |
 |--------|--------|
-| Ядро бота (модель управления доступом, аудит, конфиг) | В разработке |
+| Ядро бота (модель управления доступом, аудит, конфиг) | ✔ |
 | Мониторинг (CPU, RAM, Disk, LA) | Планируется |
 | Алерты о сбоях | Планируется |
 | Доступ к логам сервисов | Планируется |
@@ -38,7 +38,7 @@ Telegram-бот для управления и мониторинга серве
 ## Стек
 
 * Golang + go-telegram-bot-api
-* PostgreSQL 18
+* PostgreSQL 16
 * GCP (Compute Engine) + VPS + домен
 * Docker, Ansible
 * GitHub Actions (CI/CD)
@@ -46,13 +46,34 @@ Telegram-бот для управления и мониторинга серве
 ## Структура проекта
 
 ```
-в разработке...
+┌────────────────┐      ┌───────────────────────────────────┐
+│  Telegram      │◄────►│  tgOPS Bot (Go binary)            │
+│  User/Admin    │      │  ├─ Router (command dispatcher)   │
+└────────────────┘      │  ├─ Middleware (RBAC, audit log)  │
+                        │  ├─ Modules (plugins)             │
+                        │  └─ Config (YAML)                 │
+                        └───────────────┬───────────────────┘
+                                        │
+              ┌─────────────────────────┼─────────────────────────┐
+              ▼                         ▼                         ▼
+┌────────────────┐      ┌────────────────┐      ┌────────────────┐
+│  PostgreSQL    │      │  VPS           │      │  GCP           │
+│  primary +     │      │  SSH/API       │      │  Terraform     │
+│  replica       │      │  Docker        │      │  GCE, GKE      │
+└────────────────┘      │  systemd       │      │  Cloud API     │
+                        └────────────────┘      └────────────────┘
 ```
 
 ## Запуск
 
 ```bash
 git clone https://github.com/welizary/tgops.git
+cd tgops/deployments
+docker compose up -d postgres
+cp ../configs/config.example.yaml ../configs/config.yaml
+nano /configs/config.yaml
+# Отредактировать конфиг, задав чат-айди администратора, токен бота, пароль от БД
+cd .. && go run ./cmd/tgops --config configs/config.yaml
 # в разработке...
 ```
 
