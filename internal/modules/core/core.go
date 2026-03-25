@@ -74,7 +74,7 @@ func (m *Module) handleHelp(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, user *s
 	var sb strings.Builder
 	sb.WriteString("*Доступные команды:*\n\n")
 	for _, c := range cmds {
-		sb.WriteString(fmt.Sprintf("%s - %s\n", c.Command, c.Description))
+		fmt.Fprintf(&sb, "%s - %s\n", c.Command, c.Description)
 	}
 
 	reply := tgbotapi.NewMessage(msg.Chat.ID, sb.String())
