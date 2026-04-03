@@ -67,10 +67,10 @@ func (c *Client) Run(ctx context.Context, spec ServerSpec, command string) (stri
 	sess, err := conn.NewSession()
 	if err != nil {
 		// Соединение протухло - не возвращаем в пул
-		conn.Close()
+		_ = conn.Close()
 		return "", fmt.Errorf("сессия на %s: %w", spec.Host, err)
 	}
-	defer sess.Close()
+	defer sess.Close() //nolint:errcheck
 
 	// Таймаут команды через контекст
 	cmdTimeout, err := time.ParseDuration(c.cfg.CommandTimeout)
@@ -85,7 +85,7 @@ func (c *Client) Run(ctx context.Context, spec ServerSpec, command string) (stri
 	go func() {
 		select {
 		case <-cmdCtx.Done():
-			sess.Close()
+			_ = sess.Close()
 		case <-done:
 		}
 	}()
@@ -113,7 +113,7 @@ func (c *Client) getConn(spec ServerSpec) (*gossh.Client, error) {
 		if _, _, err := conn.SendRequest("keepalive@openssh.com", true, nil); err == nil {
 			return conn, nil
 		}
-		conn.Close()
+		_ = conn.Close()
 	default:
 	}
 
@@ -126,7 +126,7 @@ func (c *Client) putConn(spec ServerSpec, conn *gossh.Client) {
 	select {
 	case pool <- conn:
 	default:
-		conn.Close()
+		_ = conn.Close()
 	}
 }
 
