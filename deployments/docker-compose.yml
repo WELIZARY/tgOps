@@ -11,7 +11,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "5477:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U tgops -d tgops"]
       interval: 5s
@@ -27,6 +27,7 @@ services:
       context: ..
       dockerfile: deployments/Dockerfile
     container_name: tgops-bot
+    user: "1000:1000"
     env_file: ../.env
     depends_on:
       postgres:

@@ -4,7 +4,7 @@
 
 # - Telegram бот -
 telegram:
-  token: "YOUR_BOT_TOKEN_HERE"
+  token: ""  # берётся из TGOPS_TELEGRAM_TOKEN в .env
   initial_admin_id: 123456789
   mode: "polling"
   webhook:
@@ -20,7 +20,7 @@ database:
     host: "localhost"
     port: 5432
     user: "tgops"
-    password: "YOUR_DB_PASSWORD"
+    password: ""  # берётся из TGOPS_DATABASE_PRIMARY_PASSWORD в .env
     name: "tgops"
     ssl_mode: "disable"
     max_open_conns: 20
