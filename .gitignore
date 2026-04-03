@@ -36,6 +36,15 @@ id_ed25519*
 *.pub
 known_hosts
 
+# - Приватные ключи для подключения к серверам мониторинга -
+# Все ключи хранятся в keys/, не коммитятся
+# Для добавления ключей смотри configs/config.ssh.servers.example.yaml
+keys/
+!keys/.gitkeep
+
+# - Документация проекта (только для разработчика) -
+tgops.md
+
 # - Terraform состояние и креды -
 deployments/terraform/.terraform/
 deployments/terraform/*.tfstate
