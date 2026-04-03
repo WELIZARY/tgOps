@@ -53,6 +53,35 @@ type AuditEntry struct {
 	CreatedAt  time.Time
 }
 
+// Server - управляемый сервер из таблицы servers
+type Server struct {
+	ID        int
+	Name      string
+	Host      string
+	Port      int
+	SSHUser   string
+	KeyName   string // имя файла ключа в keys_dir (пусто - используется default)
+	IsActive  bool
+	CreatedAt time.Time
+}
+
+// Типы алертов
+const (
+	AlertTypeCPU         = "cpu"
+	AlertTypeRAM         = "ram"
+	AlertTypeDisk        = "disk"
+	AlertTypeServiceDown = "service_down"
+	AlertTypeSSL         = "ssl"
+	AlertTypeHTTP        = "http"
+)
+
+// Уровни критичности алертов
+const (
+	SeverityCritical = "critical"
+	SeverityWarning  = "warning"
+	SeverityInfo     = "info"
+)
+
 // Alert - алерт о проблеме на сервере
 type Alert struct {
 	ID           int
