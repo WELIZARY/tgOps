@@ -1,0 +1,72 @@
+# Пример конфигурации SSH-серверов для мониторинга
+
+# Этот файл - шаблон. Реальный список серверов необходимо добавить в configs/config.yaml (раздел ssh.servers), он в .gitignore
+
+# Приватные ключи для подключения к серверам хранятся в keys/
+# Директория keys/ НЕ коммитится в git.
+
+# Структура:
+#   keys/
+#     vps-main          - приватный ключ для vps-main (без расширения)
+#     gcp-vm-01         - приватный ключ для gcp-vm-01
+#     .gitkeep          - маркер директории (пустой файл, коммитится)
+#
+# Права на ключи: chmod 600 keys/vps-main
+
+# Процесс генерации ключа для новых хостов:
+#   ssh-keygen -t ed25519 -f keys/vps-main -N "" -C "tgops@vps-main"
+#   cat keys/vps-main.pub  (затем добавить на сервер в authorized_keys)
+#
+
+# Раздел ssh в configs/config.yaml
+ssh:
+  # Директория с приватными ключами (относительно рабочей директории бота)
+  # В docker-compose монтируется как ./keys:/app/keys:ro
+  keys_dir: "keys"
+
+  # Ключ по умолчанию - если у сервера не указан key_name
+  default_key_path: "keys/default"
+
+  connect_timeout: "10s"
+  command_timeout: "30s"
+  max_connections_per_host: 3
+
+  servers:
+    # VPS с ключом из keys/
+    - name: "vps-main"
+      host: "1.2.3.4"
+      port: 22
+      user: "deploy"
+      key_name: "vps-main"      # файл keys/vps-main
+
+    # GCP VM с отдельным ключом
+    - name: "gcp-vm-01"
+      host: "34.56.78.90"
+      port: 22
+      user: "ubuntu"
+      key_name: "gcp-vm-01"     # файл keys/gcp-vm-01
+
+    # сервер с нестандартным портом SSH
+    - name: "staging"
+      host: "10.0.0.5"
+      port: 2222
+      user: "admin"
+      key_name: "staging"
+
+    # если key_name пустой - используется default_key_path
+    - name: "internal"
+      host: "192.168.1.10"
+      port: 22
+      user: "root"
+      key_name: ""
+
+
+# Серверы также можно добавить через таблицу servers в PostgreSQL.
+# При старте бота список из конфига и из БД объединяются.
+# Дублирующиеся (по name) записи из конфига имеют приоритет.
+
+# Пример INSERT для добавления сервера через psql:
+# INSERT INTO servers (name, host, port, ssh_user, key_name)
+# VALUES ('prod-db', '1.2.3.5', 22, 'postgres', 'prod-db');
+# Ключ prod-db нужно положить в keys/prod-db на хосте с ботом.
+
