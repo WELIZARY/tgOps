@@ -13,6 +13,9 @@ type BotCommand struct {
 	MinRole     string // минимальная роль: viewer, operator, admin
 }
 
+// CallbackHandler обрабатывает входящий CallbackQuery (нажатие inline-кнопки)
+type CallbackHandler func(ctx context.Context, bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) error
+
 // Module - интерфейс, который должен реализовать каждый модуль бота
 type Module interface {
 	// Name возвращает имя модуля
