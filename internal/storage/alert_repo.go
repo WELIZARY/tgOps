@@ -11,6 +11,9 @@ type AlertRepo interface {
 	Create(ctx context.Context, a *Alert) error
 	ListUnacknowledged(ctx context.Context) ([]*Alert, error)
 	Acknowledge(ctx context.Context, alertID, byUserID int) error
+	// HasActive проверяет, есть ли уже активный (не подтверждённый) алерт
+	// для данного сервера и типа. Нужно чтобы не спамить повторными алертами.
+	HasActive(ctx context.Context, serverName, alertType string) (bool, error)
 }
 
 type pgAlertRepo struct {
@@ -57,6 +60,19 @@ func (r *pgAlertRepo) ListUnacknowledged(ctx context.Context) ([]*Alert, error) 
 		alerts = append(alerts, a)
 	}
 	return alerts, nil
+}
+
+func (r *pgAlertRepo) HasActive(ctx context.Context, serverName, alertType string) (bool, error) {
+	var count int
+	err := r.db.ReadPool().QueryRow(ctx,
+		`SELECT COUNT(*) FROM alerts
+		 WHERE server_name = $1 AND alert_type = $2 AND NOT acknowledged`,
+		serverName, alertType,
+	).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("HasActive: %w", err)
+	}
+	return count > 0, nil
 }
 
 func (r *pgAlertRepo) Acknowledge(ctx context.Context, alertID, byUserID int) error {
