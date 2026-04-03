@@ -5,14 +5,8 @@
 # - Telegram бот -
 telegram:
   token: "YOUR_BOT_TOKEN_HERE"
-  # Telegram ID первого администратора.
-  # Используется только один раз: если таблица users пустая,
-  # этот пользователь вставляется в БД с ролью admin.
-  # Дальнейшее управление ролями - только через таблицу users.
   initial_admin_id: 123456789
-  # Режим получения обновлений: polling или webhook
   mode: "polling"
-  # Настройки webhook (только если mode: webhook)
   webhook:
     url: "https://yourdomain.com/webhook"
     port: 8443
@@ -21,19 +15,17 @@ telegram:
 
 # - База данных PostgreSQL -
 database:
-  # Primary - для записи и критичных чтений
   primary:
+    # локальный запуск: localhost, docker compose: postgres
     host: "localhost"
     port: 5432
     user: "tgops"
     password: "YOUR_DB_PASSWORD"
     name: "tgops"
-    ssl_mode: "disable"        # disable / require / verify-full
+    ssl_mode: "disable"
     max_open_conns: 20
     max_idle_conns: 5
     conn_lifetime: "5m"
-  # Replica - для read-only запросов (аудит, история алертов)
-  # Оставь пустым, если репликация не настроена - будет использован primary
   replica:
     host: ""
     port: 5432
@@ -44,37 +36,33 @@ database:
 
 # - Логирование -
 logger:
-  level: "info"           # debug / info / warn / error
-  format: "json"          # json / console
-  output: "stdout"        # stdout / stderr / путь к файлу
+  level: "info"
+  format: "json"
+  output: "stdout"
 
 # - SSH подключения к серверам -
-# Здесь - статический список для начальной инициализации
 ssh:
-  # Путь к приватному ключу по умолчанию
-  default_key_path: "/home/tgops/.ssh/id_ed25519"
+  # локальный запуск: keys, docker compose: /app/keys
+  keys_dir: "keys"
+  default_key_path: ""
   connect_timeout: "10s"
   command_timeout: "30s"
-  # Максимум одновременных SSH соединений на один сервер
   max_connections_per_host: 3
-  # Список серверов (опционально, дублирует таблицу servers в БД)
   servers:
     - name: "vps-main"
       host: "1.2.3.4"
       port: 22
       user: "deploy"
-      key_path: ""         # если пусто - используется default_key_path
+      key_name: "vps-main"
     - name: "gcp-vm-01"
       host: "34.56.78.90"
       port: 22
       user: "ubuntu"
-      key_path: ""
+      key_name: "gcp-vm-01"
 
 # - Мониторинг и алерты -
 monitoring:
-  # Интервал сбора метрик
   interval: "60s"
-  # Пороги для алертов (в процентах)
   thresholds:
     cpu_warning: 80
     cpu_critical: 90
@@ -82,21 +70,21 @@ monitoring:
     ram_critical: 85
     disk_warning: 80
     disk_critical: 90
-  # Дедупликация - не слать повторный алерт раньше, чем через:
   alert_cooldown: "10m"
+
+# - Уведомления -
+notify:
+  chat_id: 123456789
 
 # - SSL проверки -
 ssl:
-  # Домены для проверки сертификатов
   domains:
     - "yourdomain.com"
     - "api.yourdomain.com"
-  # Уведомлять за N дней до истечения
   warn_days: [30, 14, 7, 1]
-  # Интервал проверки
   check_interval: "24h"
 
-# - HTTP URL проверки (health checks) -
+# - HTTP URL проверки -
 health_checks:
   interval: "60s"
   timeout: "10s"
@@ -110,44 +98,33 @@ health_checks:
 
 # - Модуль логов -
 logs:
-  # Белый список сервисов, логи которых можно смотреть
   allowed_services:
     - "nginx"
     - "docker"
     - "ssh"
     - "tgops"
-  # Максимум строк в одном ответе (если больше - отправит файлом)
   max_lines: 100
   max_message_chars: 4096
 
 # - Docker -
 docker:
-  # Подключение к Docker daemon на удалённом сервере
-  # unix:///var/run/docker.sock - локальный сокет
-  # tcp://host:2376 - TCP (требует TLS)
   host: "unix:///var/run/docker.sock"
   timeout: "30s"
 
 # - CI/CD webhook приёмник -
 cicd:
-  # Порт для приёма webhook от GitHub/GitLab/Jenkins
   webhook_port: 8080
-  # Секрет для валидации подписи (HMAC)
   webhook_secret: "YOUR_WEBHOOK_SECRET"
-  # Канал/чат куда слать уведомления о пайплайнах
   notify_chat_id: 123456789
 
 # - Ansible -
 ansible:
-  # Путь к ansible-playbook
   binary: "ansible-playbook"
   inventory_path: "/etc/ansible/hosts"
   playbooks_dir: "/opt/ansible/playbooks"
-  # Белый список плейбуков для запуска через бота
   allowed_playbooks:
     - "deploy-app.yml"
     - "update-packages.yml"
-  # Белый список модулей для ad-hoc команд
   allowed_modules:
     - "ping"
     - "setup"
@@ -157,15 +134,11 @@ ansible:
 terraform:
   binary: "terraform"
   working_dir: "/opt/terraform/infra"
-  # Только admin может делать apply
   apply_requires_admin: true
-  # Интервал проверки дрифта (0 - отключено)
   drift_check_interval: "6h"
 
 # - Планировщик отчётов -
 scheduler:
   timezone: "Europe/Moscow"
-  # Ежедневный health-отчёт (cron выражение)
   daily_health_cron: "0 9 * * *"
-  # Еженедельный аудит-отчёт
   weekly_audit_cron: "0 10 * * 1"
