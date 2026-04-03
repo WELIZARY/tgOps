@@ -15,6 +15,12 @@ type Bot struct {
 	log    *zap.Logger
 }
 
+// API возвращает внутренний объект Telegram-бота.
+// Нужен для передачи в модули, которые сами отправляют сообщения (например, alertMgr).
+func (b *Bot) API() *tgbotapi.BotAPI {
+	return b.api
+}
+
 // New создаёт и авторизует Telegram-бота
 func New(token string, router *Router, log *zap.Logger) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(token)
@@ -44,11 +50,14 @@ func (b *Bot) Start(ctx context.Context) {
 				b.log.Info("канал обновлений закрыт")
 				return
 			}
-			if update.Message == nil {
-				continue
+			if update.Message != nil {
+				// Каждое сообщение обрабатывается в отдельной горутине
+				go b.router.Dispatch(ctx, b.api, update.Message)
 			}
-			// Каждое сообщение обрабатывается в отдельной горутине
-			go b.router.Dispatch(ctx, b.api, update.Message)
+			if update.CallbackQuery != nil {
+				// Нажатие inline-кнопки
+				go b.router.DispatchCallback(ctx, b.api, update.CallbackQuery)
+			}
 		}
 	}
 }

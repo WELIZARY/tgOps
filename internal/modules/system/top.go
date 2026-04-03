@@ -65,11 +65,11 @@ func formatTop(serverName string, procs []Process) string {
 	sb.WriteString(formatter.Bold(serverName) + " - топ процессов\n\n")
 
 	var table strings.Builder
-	table.WriteString(fmt.Sprintf("%-6s %-10s %5s %5s  %s\n", "PID", "USER", "CPU%", "MEM%", "COMMAND"))
+	fmt.Fprintf(&table, "%-6s %-10s %5s %5s  %s\n", "PID", "USER", "CPU%", "MEM%", "COMMAND")
 	table.WriteString(strings.Repeat("-", 52) + "\n")
 	for _, p := range procs {
-		table.WriteString(fmt.Sprintf("%-6d %-10s %5.1f %5.1f  %s\n",
-			p.PID, truncate(p.User, 10), p.CPU, p.Mem, p.CMD))
+		fmt.Fprintf(&table, "%-6d %-10s %5.1f %5.1f  %s\n",
+			p.PID, truncate(p.User, 10), p.CPU, p.Mem, p.CMD)
 	}
 
 	sb.WriteString(formatter.Pre(table.String()))
