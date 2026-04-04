@@ -15,23 +15,60 @@ import (
 // Router распределяет входящие команды по модулям,
 // выполняет RBAC-проверку и пишет аудит-лог
 type Router struct {
-	handlers map[string]modules.Module // "/command" -> модуль
-	commands []modules.BotCommand      // все зарегистрированные команды
-	minRoles map[string]string         // "/command" -> минимальная роль
-	userRepo storage.UserRepo
-	auditLog *audit.Logger
-	log      *zap.Logger
+	handlers         map[string]modules.Module         // "/command" -> модуль
+	commands         []modules.BotCommand              // все зарегистрированные команды
+	minRoles         map[string]string                 // "/command" -> минимальная роль
+	callbackHandlers map[string]modules.CallbackHandler // prefix -> обработчик
+	userRepo         storage.UserRepo
+	auditLog         *audit.Logger
+	log              *zap.Logger
 }
 
 // NewRouter создаёт Router
 func NewRouter(userRepo storage.UserRepo, auditLog *audit.Logger, log *zap.Logger) *Router {
 	return &Router{
-		handlers: make(map[string]modules.Module),
-		minRoles: make(map[string]string),
-		userRepo: userRepo,
-		auditLog: auditLog,
-		log:      log,
+		handlers:         make(map[string]modules.Module),
+		minRoles:         make(map[string]string),
+		callbackHandlers: make(map[string]modules.CallbackHandler),
+		userRepo:         userRepo,
+		auditLog:         auditLog,
+		log:              log,
 	}
+}
+
+// RegisterCallback регистрирует обработчик для CallbackQuery с указанным префиксом.
+// Например, prefix = "ack_" перехватит callback data "ack_42".
+func (r *Router) RegisterCallback(prefix string, handler modules.CallbackHandler) {
+	r.callbackHandlers[prefix] = handler
+	r.log.Info("callback обработчик зарегистрирован", zap.String("prefix", prefix))
+}
+
+// DispatchCallback обрабатывает входящий CallbackQuery.
+// Ищет обработчик по префиксу callback data, проверяет пользователя и вызывает обработчик.
+func (r *Router) DispatchCallback(ctx context.Context, bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) {
+	user, err := r.userRepo.GetByTelegramID(ctx, query.From.ID)
+	if err != nil {
+		r.log.Error("ошибка получения пользователя (callback)", zap.Int64("telegram_id", query.From.ID), zap.Error(err))
+		return
+	}
+	if user == nil || !user.IsActive {
+		return
+	}
+	ctx = storage.WithUser(ctx, user)
+
+	for prefix, handler := range r.callbackHandlers {
+		if len(query.Data) >= len(prefix) && query.Data[:len(prefix)] == prefix {
+			if err := handler(ctx, bot, query); err != nil {
+				r.log.Error("ошибка обработки callback",
+					zap.String("prefix", prefix),
+					zap.Int64("user", query.From.ID),
+					zap.Error(err),
+				)
+			}
+			return
+		}
+	}
+	r.log.Warn("необработанный callback", zap.String("data", query.Data))
 }
 
 // Register регистрирует все команды модуля в роутере

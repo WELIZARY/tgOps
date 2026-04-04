@@ -4,20 +4,22 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: tgops-postgres
+    env_file: ../.env
     environment:
       POSTGRES_USER: tgops
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tgops_dev_pass}
       POSTGRES_DB: tgops
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "5477:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U tgops -d tgops"]
       interval: 5s
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    networks:
+      - tgops-net
 
   # - tgOPS бот -
   tgops:
@@ -25,15 +27,21 @@ services:
       context: ..
       dockerfile: deployments/Dockerfile
     container_name: tgops-bot
+    user: "1000:1000"
+    env_file: ../.env
     depends_on:
       postgres:
         condition: service_healthy
-    environment:
-      TGOPS_TELEGRAM_TOKEN: ${TGOPS_TELEGRAM_TOKEN}
-      TGOPS_DATABASE_PRIMARY_PASSWORD: ${POSTGRES_PASSWORD:-tgops_dev_pass}
     volumes:
       - ../configs/config.yaml:/app/config.yaml:ro
+      - ../keys:/app/keys:ro
     restart: unless-stopped
+    networks:
+      - tgops-net
 
 volumes:
   pgdata:
+
+networks:
+  tgops-net:
+    driver: bridge

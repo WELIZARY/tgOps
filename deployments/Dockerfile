@@ -20,7 +20,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 FROM alpine:3.19
 
 # Сертификаты нужны для HTTPS запросов к Telegram API
-RUN apk add --no-cache ca-certificates tzdata
+# iputils - ping, traceroute - traceroute, bind-tools - nslookup/dig
+RUN apk add --no-cache ca-certificates tzdata iputils traceroute bind-tools
 
 # Создаём непривилегированного пользователя
 RUN addgroup -S tgops && adduser -S tgops -G tgops

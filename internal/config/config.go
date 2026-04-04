@@ -8,10 +8,14 @@ import (
 
 // Config - корневая структура конфигурации
 type Config struct {
-	Telegram TelegramConfig `mapstructure:"telegram"`
-	Database DatabaseConfig `mapstructure:"database"`
-	Logger   LoggerConfig   `mapstructure:"logger"`
-	SSH      SSHConfig      `mapstructure:"ssh"`
+	Telegram     TelegramConfig     `mapstructure:"telegram"`
+	Database     DatabaseConfig     `mapstructure:"database"`
+	Logger       LoggerConfig       `mapstructure:"logger"`
+	SSH          SSHConfig          `mapstructure:"ssh"`
+	Monitoring   MonitoringConfig   `mapstructure:"monitoring"`
+	SSL          SSLConfig          `mapstructure:"ssl"`
+	HealthChecks HealthChecksConfig `mapstructure:"health_checks"`
+	Notify       NotifyConfig       `mapstructure:"notify"`
 }
 
 // TelegramConfig - настройки Telegram-бота
@@ -57,6 +61,9 @@ type LoggerConfig struct {
 
 // SSHConfig - настройки SSH-подключений
 type SSHConfig struct {
+	// KeysDir - директория с приватными ключами (относительно рабочей директории)
+	// Именование ключей: keys/{server-name} без расширения
+	KeysDir               string        `mapstructure:"keys_dir"`
 	DefaultKeyPath        string        `mapstructure:"default_key_path"`
 	ConnectTimeout        string        `mapstructure:"connect_timeout"`
 	CommandTimeout        string        `mapstructure:"command_timeout"`
@@ -70,7 +77,57 @@ type ServerEntry struct {
 	Host    string `mapstructure:"host"`
 	Port    int    `mapstructure:"port"`
 	User    string `mapstructure:"user"`
-	KeyPath string `mapstructure:"key_path"`
+	// KeyName - имя файла ключа в KeysDir (например "vps-main" -> keys/vps-main)
+	// Если пусто - используется DefaultKeyPath
+	KeyName string `mapstructure:"key_name"`
+}
+
+// MonitoringConfig - настройки фонового сборщика метрик и алертов
+type MonitoringConfig struct {
+	// Interval - как часто опрашивать серверы (например "60s")
+	Interval   string           `mapstructure:"interval"`
+	Thresholds ThresholdsConfig `mapstructure:"thresholds"`
+	// AlertCooldown - минимальное время между повторными алертами одного типа
+	AlertCooldown string `mapstructure:"alert_cooldown"`
+}
+
+// ThresholdsConfig - пороги для срабатывания алертов (в процентах)
+type ThresholdsConfig struct {
+	CPUWarning   float64 `mapstructure:"cpu_warning"`
+	CPUCritical  float64 `mapstructure:"cpu_critical"`
+	RAMWarning   float64 `mapstructure:"ram_warning"`
+	RAMCritical  float64 `mapstructure:"ram_critical"`
+	DiskWarning  float64 `mapstructure:"disk_warning"`
+	DiskCritical float64 `mapstructure:"disk_critical"`
+}
+
+// SSLConfig - настройки проверки SSL-сертификатов
+type SSLConfig struct {
+	// Domains - список доменов для проверки
+	Domains []string `mapstructure:"domains"`
+	// WarnDays - уведомлять за N дней до истечения (например [30, 14, 7, 1])
+	WarnDays      []int  `mapstructure:"warn_days"`
+	CheckInterval string `mapstructure:"check_interval"`
+}
+
+// HealthChecksConfig - настройки HTTP-проверок доступности
+type HealthChecksConfig struct {
+	Interval  string           `mapstructure:"interval"`
+	Timeout   string           `mapstructure:"timeout"`
+	Endpoints []EndpointConfig `mapstructure:"endpoints"`
+}
+
+// EndpointConfig - один HTTP-эндпоинт для проверки
+type EndpointConfig struct {
+	Name           string `mapstructure:"name"`
+	URL            string `mapstructure:"url"`
+	ExpectedStatus int    `mapstructure:"expected_status"`
+}
+
+// NotifyConfig - куда отправлять алерты и уведомления
+type NotifyConfig struct {
+	// ChatID - Telegram chat_id для отправки алертов (обычно совпадает с admin)
+	ChatID int64 `mapstructure:"chat_id"`
 }
 
 // Load загружает конфигурацию из YAML-файла.
@@ -121,5 +178,56 @@ func validate(cfg *Config) error {
 	if cfg.Logger.Level == "" {
 		cfg.Logger.Level = "info"
 	}
+
+	// Дефолты для SSH
+	if cfg.SSH.KeysDir == "" {
+		cfg.SSH.KeysDir = "keys"
+	}
+	if cfg.SSH.MaxConnectionsPerHost == 0 {
+		cfg.SSH.MaxConnectionsPerHost = 3
+	}
+
+	// Дефолты для мониторинга
+	if cfg.Monitoring.Interval == "" {
+		cfg.Monitoring.Interval = "60s"
+	}
+	if cfg.Monitoring.AlertCooldown == "" {
+		cfg.Monitoring.AlertCooldown = "10m"
+	}
+	if cfg.Monitoring.Thresholds.CPUWarning == 0 {
+		cfg.Monitoring.Thresholds.CPUWarning = 80
+	}
+	if cfg.Monitoring.Thresholds.CPUCritical == 0 {
+		cfg.Monitoring.Thresholds.CPUCritical = 90
+	}
+	if cfg.Monitoring.Thresholds.RAMWarning == 0 {
+		cfg.Monitoring.Thresholds.RAMWarning = 75
+	}
+	if cfg.Monitoring.Thresholds.RAMCritical == 0 {
+		cfg.Monitoring.Thresholds.RAMCritical = 85
+	}
+	if cfg.Monitoring.Thresholds.DiskWarning == 0 {
+		cfg.Monitoring.Thresholds.DiskWarning = 80
+	}
+	if cfg.Monitoring.Thresholds.DiskCritical == 0 {
+		cfg.Monitoring.Thresholds.DiskCritical = 90
+	}
+
+	// Дефолты для SSL
+	if cfg.SSL.CheckInterval == "" {
+		cfg.SSL.CheckInterval = "24h"
+	}
+	if len(cfg.SSL.WarnDays) == 0 {
+		cfg.SSL.WarnDays = []int{30, 14, 7, 1}
+	}
+
+	// Дефолты для HTTP-чеков
+	if cfg.HealthChecks.Interval == "" {
+		cfg.HealthChecks.Interval = "60s"
+	}
+	if cfg.HealthChecks.Timeout == "" {
+		cfg.HealthChecks.Timeout = "10s"
+	}
+
 	return nil
 }

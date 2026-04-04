@@ -12,7 +12,12 @@ import (
 	tgbot "github.com/WELIZARY/tgOps/internal/bot"
 	"github.com/WELIZARY/tgOps/internal/config"
 	"github.com/WELIZARY/tgOps/internal/modules"
+	"github.com/WELIZARY/tgOps/internal/modules/alerts"
 	"github.com/WELIZARY/tgOps/internal/modules/core"
+	"github.com/WELIZARY/tgOps/internal/modules/network"
+	"github.com/WELIZARY/tgOps/internal/modules/ssl"
+	"github.com/WELIZARY/tgOps/internal/modules/system"
+	internalssh "github.com/WELIZARY/tgOps/internal/ssh"
 	"github.com/WELIZARY/tgOps/internal/storage"
 )
 
@@ -54,16 +59,23 @@ func main() {
 		log.Fatal("ошибка применения миграций", zap.Error(err))
 	}
 
-	// Инициализируем репозитории
+	// Репозитории
 	userRepo := storage.NewUserRepo(db)
 	auditRepo := storage.NewAuditRepo(db)
 	alertRepo := storage.NewAlertRepo(db)
-	_ = alertRepo // будет подключён в Фазе 1 (мониторинг)
+	sslRepo := storage.NewSSLRepo(db)
+	serverRepo := storage.NewServerRepo(db)
 
 	// Bootstrap первого администратора (если БД пустая)
 	if err := bootstrapAdmin(ctx, cfg, userRepo, log); err != nil {
 		log.Fatal("ошибка bootstrap администратора", zap.Error(err))
 	}
+
+	// Источник серверов: конфиг + БД
+	serverSrc := internalssh.NewComboSource(&cfg.SSH, serverRepo)
+
+	// SSH-клиент с пулом соединений
+	sshClient := internalssh.New(&cfg.SSH, log)
 
 	// Audit logger
 	auditLogger := audit.New(auditRepo, log)
@@ -71,22 +83,40 @@ func main() {
 	// Router - центральный диспетчер команд
 	router := tgbot.NewRouter(userRepo, auditLogger, log)
 
-	// Регистрируем core-модуль.
-	// Передаём функцию обратного вызова к router, чтобы /help знал о всех командах.
-	coreModule := core.New(func(role string) []modules.BotCommand {
-		return router.CommandsForRole(role)
-	})
-	router.Register(coreModule)
-	// Здесь будут регистрироваться модули следующих фаз:
-	// router.Register(system.New(...))
-	// router.Register(docker.New(...))
-
-	// Создаём и запускаем Telegram-бота
+	// Создаём бота до модулей - alertMgr нужен bot.API()
 	b, err := tgbot.New(cfg.Telegram.Token, router, log)
 	if err != nil {
 		log.Fatal("не удалось создать Telegram-бота", zap.Error(err))
 	}
 
+	// Alert manager - отправляет уведомления в чат
+	alertMgr := alerts.NewManager(b.API(), cfg.Notify.ChatID, log)
+
+	// Модули
+	coreModule := core.New(func(role string) []modules.BotCommand {
+		return router.CommandsForRole(role)
+	})
+	systemMod := system.New(sshClient, serverSrc, cfg, log)
+	alertsMod := alerts.New(alertRepo, log)
+	sslMod := ssl.New(&cfg.SSL, sslRepo, alertMgr, log)
+	networkMod := network.New(log)
+
+	// Регистрируем модули
+	router.Register(coreModule)
+	router.Register(systemMod)
+	router.Register(alertsMod)
+	router.Register(sslMod)
+	router.Register(networkMod)
+
+	// Callback-обработчики (inline-кнопки)
+	router.RegisterCallback("ack_", alertsMod.HandleAck)
+
+	// Фоновые горутины мониторинга
+	collector := alerts.NewCollector(sshClient, serverSrc, cfg, alertRepo, alertMgr, log)
+	go collector.Start(ctx)
+	go sslMod.Checker().Start(ctx)
+
+	log.Info("все модули зарегистрированы, запускаем бота")
 	b.Start(ctx) // блокирует до сигнала завершения
 
 	log.Info("tgOPS остановлен")
