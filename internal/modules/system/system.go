@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"go.uber.org/zap"
@@ -41,6 +42,7 @@ func (m *Module) Commands() []modules.BotCommand {
 		{Command: "/status", Description: "состояние сервера (CPU, RAM, Disk) [имя]", MinRole: "viewer"},
 		{Command: "/top", Description: "топ процессов по CPU [имя сервера]", MinRole: "viewer"},
 		{Command: "/health", Description: "сводка по всем серверам", MinRole: "viewer"},
+		{Command: "/list", Description: "список подключённых серверов", MinRole: "viewer"},
 	}
 }
 
@@ -52,6 +54,8 @@ func (m *Module) Handle(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbotapi
 		return m.handleTop(ctx, bot, msg)
 	case "health":
 		return m.handleHealth(ctx, bot, msg)
+	case "list":
+		return m.handleList(ctx, bot, msg)
 	}
 	return nil
 }
@@ -59,7 +63,7 @@ func (m *Module) Handle(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbotapi
 func (m *Module) handleStatus(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbotapi.Message) error {
 	srv, err := m.findServer(ctx, msg.CommandArguments())
 	if err != nil {
-		return replyText(bot, msg.Chat.ID, "Сервер не найден. Список серверов: /health")
+		return replyText(bot, msg.Chat.ID, m.notFoundMsg(ctx, msg.CommandArguments()))
 	}
 
 	metrics := Collect(ctx, m.ssh, internalssh.SpecFromServer(srv))
@@ -69,7 +73,7 @@ func (m *Module) handleStatus(ctx context.Context, bot *tgbotapi.BotAPI, msg *tg
 func (m *Module) handleTop(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbotapi.Message) error {
 	srv, err := m.findServer(ctx, msg.CommandArguments())
 	if err != nil {
-		return replyText(bot, msg.Chat.ID, "Сервер не найден. Список серверов: /health")
+		return replyText(bot, msg.Chat.ID, m.notFoundMsg(ctx, msg.CommandArguments()))
 	}
 
 	text, err := CollectTop(ctx, m.ssh, internalssh.SpecFromServer(srv), srv.Name)
@@ -106,12 +110,28 @@ func (m *Module) handleHealth(ctx context.Context, bot *tgbotapi.BotAPI, msg *tg
 	wg.Wait()
 
 	var sb strings.Builder
-	sb.WriteString(formatter.Bold("Health Dashboard") + "\n\n")
+	sb.WriteString(formatter.Bold("Health Dashboard") + " — " + time.Now().Format("02.01.2006 15:04") + "\n\n")
 	for _, r := range results {
 		sb.WriteString(formatHealthLine(r.name, r.metrics, m.cfg.Monitoring.Thresholds))
-		sb.WriteString("\n")
+		sb.WriteString("\n\n")
 	}
 	return replyHTML(bot, msg.Chat.ID, sb.String())
+}
+
+func (m *Module) handleList(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbotapi.Message) error {
+	servers, err := m.src.GetServers(ctx)
+	if err != nil || len(servers) == 0 {
+		return replyText(bot, msg.Chat.ID, "Серверы не настроены.")
+	}
+
+	var table strings.Builder
+	for _, s := range servers {
+		fmt.Fprintf(&table, "%-16s  port %-5d  user %-12s  key %s\n",
+			s.Host, s.Port, s.SSHUser, s.KeyName)
+	}
+
+	header := formatter.Bold(fmt.Sprintf("Серверы (%d)", len(servers))) + "\n\n"
+	return replyHTML(bot, msg.Chat.ID, header+formatter.Pre(table.String()))
 }
 
 // findServer возвращает сервер по имени из аргумента команды.
@@ -131,6 +151,23 @@ func (m *Module) findServer(ctx context.Context, arg string) (*storage.Server, e
 		}
 	}
 	return nil, fmt.Errorf("сервер %q не найден", name)
+}
+
+// notFoundMsg формирует сообщение об ошибке с перечнем доступных серверов
+func (m *Module) notFoundMsg(ctx context.Context, arg string) string {
+	name := strings.TrimSpace(arg)
+	servers, err := m.src.GetServers(ctx)
+	if err != nil || len(servers) == 0 {
+		return "Серверы не настроены."
+	}
+	if name == "" {
+		return "Серверы не настроены."
+	}
+	names := make([]string, len(servers))
+	for i, s := range servers {
+		names[i] = s.Name
+	}
+	return fmt.Sprintf("Сервер %q не найден.\nДоступные серверы: %s", name, strings.Join(names, ", "))
 }
 
 // formatStatus формирует карточку состояния одного сервера
@@ -164,22 +201,29 @@ func formatStatus(name string, m *Metrics, t config.ThresholdsConfig) string {
 	)
 }
 
-// formatHealthLine формирует одну строку сводки для /health
+// formatHealthLine формирует многострочный блок метрик одного сервера для /health
 func formatHealthLine(name string, m *Metrics, t config.ThresholdsConfig) string {
 	if m.Error != nil {
-		return fmt.Sprintf("🔴 %s - недоступен", formatter.Bold(name))
+		return fmt.Sprintf("🔴 %s\n  <i>недоступен: %s</i>",
+			formatter.Bold(name), formatter.EscapeHTML(m.Error.Error()))
 	}
 	ramPct := pct(m.RAMUsed, m.RAMTotal)
 	dskPct := pct(m.DiskUsed, m.DiskTotal)
 
-	return fmt.Sprintf("%s | %s%s | %s%s | %s%s",
+	return fmt.Sprintf(
+		"%s\n"+
+			"  CPU:  %.0f%%  %s\n"+
+			"  RAM:  %.0f%%  %s  (%s / %s)\n"+
+			"  Disk: %.0f%%  %s  (%s / %s)\n"+
+			"  Load: %.2f | Uptime: %s",
 		formatter.Bold(name),
-		formatter.SeverityEmoji(m.CPU, t.CPUWarning, t.CPUCritical),
-		formatter.ProgressBar(m.CPU, 5),
-		formatter.SeverityEmoji(ramPct, t.RAMWarning, t.RAMCritical),
-		formatter.ProgressBar(ramPct, 5),
-		formatter.SeverityEmoji(dskPct, t.DiskWarning, t.DiskCritical),
-		formatter.ProgressBar(dskPct, 5),
+		m.CPU, formatter.SeverityEmoji(m.CPU, t.CPUWarning, t.CPUCritical),
+		ramPct, formatter.SeverityEmoji(ramPct, t.RAMWarning, t.RAMCritical),
+		formatter.FormatBytes(m.RAMUsed), formatter.FormatBytes(m.RAMTotal),
+		dskPct, formatter.SeverityEmoji(dskPct, t.DiskWarning, t.DiskCritical),
+		formatter.FormatBytes(m.DiskUsed), formatter.FormatBytes(m.DiskTotal),
+		m.Load1,
+		formatter.FormatDuration(m.Uptime),
 	)
 }
 
