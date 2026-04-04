@@ -116,6 +116,13 @@ func (c *Checker) Check(domain string) *CheckResult {
 	return result
 }
 
+// CheckAndSave проверяет домен и сохраняет результат в БД
+func (c *Checker) CheckAndSave(ctx context.Context, domain string) *CheckResult {
+	result := c.Check(domain)
+	c.save(ctx, result)
+	return result
+}
+
 // save сохраняет результат проверки в БД
 func (c *Checker) save(ctx context.Context, r *CheckResult) {
 	if r.Error != nil {

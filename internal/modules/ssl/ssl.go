@@ -46,8 +46,33 @@ func (m *Module) Handle(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbotapi
 		return err
 	}
 
+	// находим домены из конфига, которых ещё нет в БД
+	inDB := make(map[string]bool, len(checks))
+	for _, c := range checks {
+		inDB[c.Domain] = true
+	}
+	var missing []string
+	for _, domain := range m.checker.cfg.Domains {
+		if !inDB[domain] {
+			missing = append(missing, domain)
+		}
+	}
+
+	if len(missing) > 0 {
+		_, _ = bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Проверяю сертификаты..."))
+		for _, domain := range missing {
+			m.checker.CheckAndSave(ctx, domain)
+		}
+		// перечитываем БД после добавления недостающих доменов
+		checks, err = m.sslRepo.GetAll(ctx)
+		if err != nil {
+			m.log.Error("ошибка получения SSL-проверок", zap.Error(err))
+			return err
+		}
+	}
+
 	if len(checks) == 0 {
-		// Данных в БД нет - запускаем проверку прямо сейчас
+		// БД пустая и в конфиге нет доменов - показываем live-проверку
 		return m.handleLiveCheck(ctx, bot, msg)
 	}
 

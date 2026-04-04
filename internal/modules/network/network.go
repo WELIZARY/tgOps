@@ -3,6 +3,7 @@ package network
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -12,27 +13,20 @@ import (
 
 	"github.com/WELIZARY/tgOps/internal/formatter"
 	"github.com/WELIZARY/tgOps/internal/modules"
-	internalssh "github.com/WELIZARY/tgOps/internal/ssh"
-	"github.com/WELIZARY/tgOps/internal/storage"
 )
 
 // validHost разрешает только hostname/IP символы, чтобы не допустить инъекций команд
 var validHost = regexp.MustCompile(`^[a-zA-Z0-9.\-]+$`)
 
 // Module - модуль сетевых утилит (/ping, /traceroute, /nslookup)
+// Команды выполняются локально на хосте бота через os/exec
 type Module struct {
-	sshClient *internalssh.Client
-	src       internalssh.ServerSource
-	log       *zap.Logger
+	log *zap.Logger
 }
 
 // New создаёт модуль сетевых утилит
-func New(sshClient *internalssh.Client, src internalssh.ServerSource, log *zap.Logger) *Module {
-	return &Module{
-		sshClient: sshClient,
-		src:       src,
-		log:       log,
-	}
+func New(log *zap.Logger) *Module {
+	return &Module{log: log}
 }
 
 func (m *Module) Name() string { return "network" }
@@ -60,23 +54,17 @@ func (m *Module) Handle(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbotapi
 func (m *Module) handlePing(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbotapi.Message) error {
 	host, err := m.validateHost(bot, msg)
 	if err != nil {
-		return nil // ответ уже отправлен
-	}
-	srv, err := m.firstServer(ctx)
-	if err != nil {
-		return replyText(bot, msg.Chat.ID, "Серверы не настроены.")
+		return nil
 	}
 
 	cmdCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	out, err := m.sshClient.Run(cmdCtx, internalssh.SpecFromServer(srv),
-		fmt.Sprintf("ping -c 4 -W 3 %s", host))
+	out, err := runCmd(cmdCtx, "ping", "-c", "4", "-W", "3", host)
 	if err != nil {
 		m.log.Warn("ping завершился с ошибкой", zap.String("host", host), zap.Error(err))
 	}
-	return replyPre(bot, msg.Chat.ID,
-		fmt.Sprintf("ping %s (через %s)\n\n%s", host, srv.Name, strings.TrimSpace(out)))
+	return replyPre(bot, msg.Chat.ID, fmt.Sprintf("ping %s\n\n%s", host, strings.TrimSpace(out)))
 }
 
 func (m *Module) handleTraceroute(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbotapi.Message) error {
@@ -84,21 +72,17 @@ func (m *Module) handleTraceroute(ctx context.Context, bot *tgbotapi.BotAPI, msg
 	if err != nil {
 		return nil
 	}
-	srv, err := m.firstServer(ctx)
-	if err != nil {
-		return replyText(bot, msg.Chat.ID, "Серверы не настроены.")
-	}
 
-	cmdCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	_, _ = bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Выполняю traceroute, подождите..."))
+
+	cmdCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	out, err := m.sshClient.Run(cmdCtx, internalssh.SpecFromServer(srv),
-		fmt.Sprintf("traceroute -m 15 %s", host))
+	out, err := runCmd(cmdCtx, "traceroute", "-m", "15", host)
 	if err != nil {
 		m.log.Warn("traceroute завершился с ошибкой", zap.String("host", host), zap.Error(err))
 	}
-	return replyPre(bot, msg.Chat.ID,
-		fmt.Sprintf("traceroute %s (через %s)\n\n%s", host, srv.Name, strings.TrimSpace(out)))
+	return replyPre(bot, msg.Chat.ID, fmt.Sprintf("traceroute %s\n\n%s", host, strings.TrimSpace(out)))
 }
 
 func (m *Module) handleNslookup(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbotapi.Message) error {
@@ -106,21 +90,15 @@ func (m *Module) handleNslookup(ctx context.Context, bot *tgbotapi.BotAPI, msg *
 	if err != nil {
 		return nil
 	}
-	srv, err := m.firstServer(ctx)
-	if err != nil {
-		return replyText(bot, msg.Chat.ID, "Серверы не настроены.")
-	}
 
 	cmdCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	out, err := m.sshClient.Run(cmdCtx, internalssh.SpecFromServer(srv),
-		fmt.Sprintf("nslookup %s", host))
+	out, err := runCmd(cmdCtx, "nslookup", host)
 	if err != nil {
 		m.log.Warn("nslookup завершился с ошибкой", zap.String("host", host), zap.Error(err))
 	}
-	return replyPre(bot, msg.Chat.ID,
-		fmt.Sprintf("nslookup %s (через %s)\n\n%s", host, srv.Name, strings.TrimSpace(out)))
+	return replyPre(bot, msg.Chat.ID, fmt.Sprintf("nslookup %s\n\n%s", host, strings.TrimSpace(out)))
 }
 
 // validateHost проверяет аргумент команды на допустимые символы.
@@ -138,13 +116,11 @@ func (m *Module) validateHost(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) (stri
 	return host, nil
 }
 
-// firstServer возвращает первый доступный сервер из источника
-func (m *Module) firstServer(ctx context.Context) (*storage.Server, error) {
-	servers, err := m.src.GetServers(ctx)
-	if err != nil || len(servers) == 0 {
-		return nil, fmt.Errorf("серверов нет")
-	}
-	return servers[0], nil
+// runCmd запускает команду и возвращает combined output
+func runCmd(ctx context.Context, name string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
 }
 
 func replyText(bot *tgbotapi.BotAPI, chatID int64, text string) error {

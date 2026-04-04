@@ -99,7 +99,7 @@ func main() {
 	systemMod := system.New(sshClient, serverSrc, cfg, log)
 	alertsMod := alerts.New(alertRepo, log)
 	sslMod := ssl.New(&cfg.SSL, sslRepo, alertMgr, log)
-	networkMod := network.New(sshClient, serverSrc, log)
+	networkMod := network.New(log)
 
 	// Регистрируем модули
 	router.Register(coreModule)
