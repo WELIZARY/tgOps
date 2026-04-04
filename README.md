@@ -41,7 +41,7 @@ Telegram-бот для управления и мониторинга серве
 * PostgreSQL 16
 * GCP (Compute Engine) + VPS + домен
 * Docker, Ansible
-* GitHub Actions (CI/CD)
+* GitHub Actions (CI/CD), Jenkins
 
 ## Структура проекта
 
