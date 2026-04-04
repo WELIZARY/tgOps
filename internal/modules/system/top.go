@@ -12,7 +12,6 @@ import (
 
 // Process - один процесс из топ-листа
 type Process struct {
-	PID  int
 	User string
 	CPU  float64
 	Mem  float64
@@ -30,7 +29,7 @@ func CollectTop(ctx context.Context, c *internalssh.Client, spec internalssh.Ser
 }
 
 // parsePS парсит вывод ps aux (первая строка - заголовок, пропускаем).
-// Формат: USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND...
+// формат: USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND...
 func parsePS(out string) []Process {
 	lines := strings.Split(out, "\n")
 	var procs []Process
@@ -39,37 +38,44 @@ func parsePS(out string) []Process {
 		if len(fields) < 11 {
 			continue
 		}
-		pid, _ := strconv.Atoi(fields[1])
 		cpu, _ := strconv.ParseFloat(fields[2], 64)
 		mem, _ := strconv.ParseFloat(fields[3], 64)
 
-		cmd := strings.Join(fields[10:], " ")
-		if len(cmd) > 35 {
-			cmd = cmd[:32] + "..."
+		// пропускаем сам процесс ps
+		if strings.HasPrefix(fields[10], "ps") {
+			continue
+		}
+
+		// показываем только имя бинарника без пути и аргументов
+		name := fields[10]
+		if idx := strings.LastIndex(name, "/"); idx >= 0 {
+			name = name[idx+1:]
+		}
+		if len(name) > 20 {
+			name = name[:17] + "..."
 		}
 
 		procs = append(procs, Process{
-			PID:  pid,
 			User: fields[0],
 			CPU:  cpu,
 			Mem:  mem,
-			CMD:  cmd,
+			CMD:  name,
 		})
 	}
 	return procs
 }
 
-// formatTop форматирует список процессов в моноширинную таблицу
+// formatTop форматирует список процессов в моноширинную таблицу для Telegram
 func formatTop(serverName string, procs []Process) string {
 	var sb strings.Builder
-	sb.WriteString(formatter.Bold(serverName) + " - топ процессов\n\n")
+	sb.WriteString(formatter.Bold(serverName) + " — топ процессов\n\n")
 
 	var table strings.Builder
-	fmt.Fprintf(&table, "%-6s %-10s %5s %5s  %s\n", "PID", "USER", "CPU%", "MEM%", "COMMAND")
-	table.WriteString(strings.Repeat("-", 52) + "\n")
+	fmt.Fprintf(&table, "%5s  %5s  %-8s  %s\n", "CPU%", "MEM%", "USER", "PROCESS")
+	table.WriteString(strings.Repeat("─", 38) + "\n")
 	for _, p := range procs {
-		fmt.Fprintf(&table, "%-6d %-10s %5.1f %5.1f  %s\n",
-			p.PID, truncate(p.User, 10), p.CPU, p.Mem, p.CMD)
+		fmt.Fprintf(&table, "%5.1f  %5.1f  %-8s  %s\n",
+			p.CPU, p.Mem, truncate(p.User, 8), p.CMD)
 	}
 
 	sb.WriteString(formatter.Pre(table.String()))
