@@ -95,6 +95,32 @@ type Alert struct {
 	CreatedAt    time.Time
 }
 
+// PipelineEvent - событие CI/CD пайплайна (GitHub/GitLab/Jenkins)
+type PipelineEvent struct {
+	ID          int
+	PipelineID  string     // внешний идентификатор (run_id у GitHub, pipeline_id у GitLab)
+	Source      string     // github, gitlab, jenkins
+	Repo        string
+	Branch      string
+	Status      string
+	Author      string
+	ApprovedBy  *int       // FK → users.id, кто нажал approve/reject
+	ApprovedAt  *time.Time
+	TGMessageID int        // message_id Telegram-уведомления для редактирования
+	Payload     []byte     // raw JSON от webhook
+	CreatedAt   time.Time
+}
+
+// статусы CI/CD пайплайна
+const (
+	PipelineStatusPending  = "pending"
+	PipelineStatusRunning  = "running"
+	PipelineStatusSuccess  = "success"
+	PipelineStatusFailed   = "failed"
+	PipelineStatusApproved = "approved"
+	PipelineStatusRejected = "rejected"
+)
+
 // - Хелперы для передачи User через context -
 
 type contextKey string

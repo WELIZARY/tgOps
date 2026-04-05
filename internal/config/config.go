@@ -16,6 +16,9 @@ type Config struct {
 	SSL          SSLConfig          `mapstructure:"ssl"`
 	HealthChecks HealthChecksConfig `mapstructure:"health_checks"`
 	Notify       NotifyConfig       `mapstructure:"notify"`
+	Logs         LogsConfig         `mapstructure:"logs"`
+	Docker       DockerConfig       `mapstructure:"docker"`
+	CICD         CICDConfig         `mapstructure:"cicd"`
 }
 
 // TelegramConfig - настройки Telegram-бота
@@ -130,6 +133,33 @@ type NotifyConfig struct {
 	ChatID int64 `mapstructure:"chat_id"`
 }
 
+// LogsConfig - настройки модуля просмотра логов сервисов
+type LogsConfig struct {
+	// AllowedServices - whitelist сервисов, логи которых разрешено смотреть через бота
+	AllowedServices []string `mapstructure:"allowed_services"`
+	// MaxLines - количество строк журнала по умолчанию
+	MaxLines int `mapstructure:"max_lines"`
+	// MaxMessageChars - лимит символов в одном Telegram-сообщении
+	MaxMessageChars int `mapstructure:"max_message_chars"`
+}
+
+// DockerConfig - настройки Docker-модуля
+type DockerConfig struct {
+	// Host - зарезервировано для будущей интеграции с Docker API напрямую
+	Host    string `mapstructure:"host"`
+	Timeout string `mapstructure:"timeout"`
+}
+
+// CICDConfig - настройки CI/CD webhook-приёмника и уведомлений
+type CICDConfig struct {
+	// WebhookPort - порт HTTP-сервера для входящих webhook от GitHub/GitLab/Jenkins
+	WebhookPort int `mapstructure:"webhook_port"`
+	// WebhookSecret - HMAC-ключ для проверки подписи X-Hub-Signature-256
+	WebhookSecret string `mapstructure:"webhook_secret"`
+	// NotifyChatID - chat_id для уведомлений о деплоях (может отличаться от алертов)
+	NotifyChatID int64 `mapstructure:"notify_chat_id"`
+}
+
 // Load загружает конфигурацию из YAML-файла.
 // Переменные окружения с префиксом TGOPS_ имеют приоритет над файлом.
 func Load(path string) (*Config, error) {
@@ -221,12 +251,30 @@ func validate(cfg *Config) error {
 		cfg.SSL.WarnDays = []int{30, 14, 7, 1}
 	}
 
-	// Дефолты для HTTP-чеков
+	// дефолты для HTTP-чеков
 	if cfg.HealthChecks.Interval == "" {
 		cfg.HealthChecks.Interval = "60s"
 	}
 	if cfg.HealthChecks.Timeout == "" {
 		cfg.HealthChecks.Timeout = "10s"
+	}
+
+	// дефолты для модуля логов
+	if cfg.Logs.MaxLines == 0 {
+		cfg.Logs.MaxLines = 100
+	}
+	if cfg.Logs.MaxMessageChars == 0 {
+		cfg.Logs.MaxMessageChars = 4096
+	}
+
+	// дефолты для Docker-модуля
+	if cfg.Docker.Timeout == "" {
+		cfg.Docker.Timeout = "30s"
+	}
+
+	// дефолты для CI/CD
+	if cfg.CICD.WebhookPort == 0 {
+		cfg.CICD.WebhookPort = 8080
 	}
 
 	return nil
