@@ -13,7 +13,10 @@ import (
 	"github.com/WELIZARY/tgOps/internal/config"
 	"github.com/WELIZARY/tgOps/internal/modules"
 	"github.com/WELIZARY/tgOps/internal/modules/alerts"
+	"github.com/WELIZARY/tgOps/internal/modules/cicd"
 	"github.com/WELIZARY/tgOps/internal/modules/core"
+	"github.com/WELIZARY/tgOps/internal/modules/docker"
+	"github.com/WELIZARY/tgOps/internal/modules/logs"
 	"github.com/WELIZARY/tgOps/internal/modules/network"
 	"github.com/WELIZARY/tgOps/internal/modules/ssl"
 	"github.com/WELIZARY/tgOps/internal/modules/system"
@@ -65,6 +68,7 @@ func main() {
 	alertRepo := storage.NewAlertRepo(db)
 	sslRepo := storage.NewSSLRepo(db)
 	serverRepo := storage.NewServerRepo(db)
+	pipelineRepo := storage.NewPipelineRepo(db)
 
 	// Bootstrap первого администратора (если БД пустая)
 	if err := bootstrapAdmin(ctx, cfg, userRepo, log); err != nil {
@@ -92,6 +96,12 @@ func main() {
 	// Alert manager - отправляет уведомления в чат
 	alertMgr := alerts.NewManager(b.API(), cfg.Notify.ChatID, log)
 
+	// CI/CD notifier - отправляет уведомления о деплоях
+	cicdNotifier := cicd.NewNotifier(b.API(), cfg.CICD.NotifyChatID, pipelineRepo, log)
+
+	// Webhook-сервер для приёма событий от GitHub/GitLab/Jenkins
+	webhookSrv := cicd.NewWebhookServer(pipelineRepo, cicdNotifier, cfg.CICD.WebhookSecret, log)
+
 	// Модули
 	coreModule := core.New(func(role string) []modules.BotCommand {
 		return router.CommandsForRole(role)
@@ -100,6 +110,9 @@ func main() {
 	alertsMod := alerts.New(alertRepo, log)
 	sslMod := ssl.New(&cfg.SSL, sslRepo, alertMgr, log)
 	networkMod := network.New(log)
+	logsMod := logs.New(sshClient, serverSrc, &cfg.Logs, log)
+	dockerMod := docker.New(sshClient, serverSrc, &cfg.Docker, log)
+	cicdMod := cicd.New(pipelineRepo, cicdNotifier, log)
 
 	// Регистрируем модули
 	router.Register(coreModule)
@@ -107,14 +120,20 @@ func main() {
 	router.Register(alertsMod)
 	router.Register(sslMod)
 	router.Register(networkMod)
+	router.Register(logsMod)
+	router.Register(dockerMod)
+	router.Register(cicdMod)
 
 	// Callback-обработчики (inline-кнопки)
 	router.RegisterCallback("ack_", alertsMod.HandleAck)
+	router.RegisterCallback("deploy_approve_", cicdMod.HandleApprove)
+	router.RegisterCallback("deploy_reject_", cicdMod.HandleReject)
 
 	// Фоновые горутины мониторинга
 	collector := alerts.NewCollector(sshClient, serverSrc, cfg, alertRepo, alertMgr, log)
 	go collector.Start(ctx)
 	go sslMod.Checker().Start(ctx)
+	go webhookSrv.Start(ctx, cfg.CICD.WebhookPort)
 
 	log.Info("все модули зарегистрированы, запускаем бота")
 	b.Start(ctx) // блокирует до сигнала завершения

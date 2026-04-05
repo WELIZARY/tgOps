@@ -11,10 +11,10 @@ Telegram-бот для управления и мониторинга серве
 | Алерты о сбоях | ✔ |
 | SSL-сертификаты — проверка сроков | ✔ |
 | Сетевые утилиты (ping, traceroute, nslookup) | ✔ |
-| Доступ к логам сервисов | В разработке... |
-| Управление Docker | В разработке... |
-| CI/CD уведомления и подтверждение деплоя | Планируется |
-| Ansible (inventory, playbooks, modules) | Планируется |
+| Доступ к логам сервисов | ✔ |
+| Управление Docker | ✔ |
+| CI/CD уведомления и подтверждение деплоя | ✔ |
+| Ansible (inventory, playbooks, modules) | В разработке |
 | Планировщик задач (cron, ?systemd timers) | Планируется |
 | Сканирование уязвимостей | Планируется |
 | Проверка обновлений ПО | Планируется |
@@ -63,21 +63,103 @@ Telegram-бот для управления и мониторинга серве
 └────────────────┘      │  systemd       │      │  Cloud API     │
                         └────────────────┘      └────────────────┘
 ```
+## Требования
+Golang (v.1.26.1)
+Docker (версия 20+)
+Docker Compose v2
+Git
+Make (опционально)
 
-## Запуск
+## Первоначальная настройка
 
 ```bash
+#Клонируем репозиторий
 git clone https://github.com/welizary/tgops.git
-cd tgops/deployments
-docker compose up -d postgres
-cp ../configs/config.example.yaml ../configs/config.yaml
-nano /configs/config.yaml
-# Отредактировать конфиг, задав чат-айди администратора, токен бота, пароль от БД
-cd .. && go run ./cmd/tgops --config configs/config.yaml
-# в разработке...
+cd tgops
+
+#Создаем конфигурационные файлы
+cp .env.example .env
+cp configs/config.example.yaml configs/config.yaml
+mkdir -p keys
+
+#Создаем тг-бота и его токен указываем в .env, там же указываем пароли к БД
+#Узнаем свой айди своего тг-аккаунта
+
+#Генерируем SSH-ключи для серверов
+ssh-keygen -t ed25519 -f keys/vps-name -N "" -C "tgops@vps-name" #так для каждой управляемой машины
+chmod 600 keys/*
+
+#Добавляем ключи на управляемый сервер через ssh-copy, либо вручную
+
+#Настраиваем config
+nano configs/config.yaml
+
+...
+
+telegram:
+  token: ""                     # оставляем пустым, токен берётся из TGOPS_TELEGRAM_TOKEN в .env
+  initial_admin_id: 123456789   # вставляем свой Telegram ID (от @userinfobot)
+  mode: "polling"
+
+initial_admin_id - одноразовая конфигурация, дабы присвоить указанному юзеру права администратора
+
+...
+
+database:
+  primary:
+    host: "postgres"   # именно "postgres" для Docker Compose, не localhost
+    port: 5432
+    user: "tgops"
+    password: ""       # оставляем пустым - берётся из .env
+    name: "tgops"
+    ssl_mode: "disable"
+
+ssh:
+  keys_dir: "keys"
+  default_key_path: ""
+  connect_timeout: "10s"
+  command_timeout: "30s"
+  max_connections_per_host: 3
+  servers:
+    - name: "vps-test"      # произвольное имя, будет использоваться в командах бота
+      host: "1.2.3.4"       # реальный IP сервера
+      port: 22              
+      user: "ubuntu"        # SSH-пользователь на сервере
+      key_name: "vps-main"  # имя файла в папке keys/
+
+...
+
+notify:
+  chat_id: 123456789   # свой Telegram ID - алерты будут приходить сюда
+
+...
+
+monitoring:
+  interval: "60s"      # как часто опрашивать серверы
+  thresholds:
+    cpu_warning: 80    # % CPU для предупреждения
+    cpu_critical: 90   # % CPU для критического алерта
+    ram_warning: 75
+    ram_critical: 85
+    disk_warning: 80
+    disk_critical: 90
+  alert_cooldown: "10m"  # не слать повторный алерт чаще чем раз в 10 минут
+
 ```
+## Запуск
 
-## Конфигурация
+```
+make docker-up
+#или вручную
+docker compose -f deployments/docker-compose.yml up -d --build
 
-Все настройки будут храниться в `configs/config.yaml`: токен бота, список серверов (SSH), настройки алертов, whitelist плейбуков и модулей Ansible, роли пользователей.
+make docker-logs
+#или
+docker compose -f deployments/docker-compose.yml logs -f tgops
 
+#проверяем, что оба контейнера (БД и бот) запущены
+
+docker compose -f deployments/docker-compose.yml ps
+
+
+```
