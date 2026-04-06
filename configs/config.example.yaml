@@ -119,16 +119,31 @@ cicd:
 
 # - Ansible -
 ansible:
-  binary: "ansible-playbook"
-  inventory_path: "/etc/ansible/hosts"
-  playbooks_dir: "/opt/ansible/playbooks"
-  allowed_playbooks:
-    - "deploy-app.yml"
-    - "update-packages.yml"
-  allowed_modules:
-    - "ping"
-    - "setup"
-    - "service"
+  playbooks_dir: "playbooks"
+  inventory_path: "inventory/hosts"
+  timeout: "5m"
+  playbooks:
+    - name: "deploy"
+      file: "deploy.yml"
+      description: "деплой приложения"
+    - name: "backup"
+      file: "backup.yml"
+      description: "резервная копия БД"
+
+# - Проверка обновлений пакетов -
+updates:
+  timeout: "60s"
+
+# - Статус резервных копий -
+backups:
+  timeout: "30s"
+  paths:
+    - name: "PostgreSQL"
+      path: "/var/backups/postgres"
+      max_age_hours: 25
+    - name: "App data"
+      path: "/var/backups/app"
+      max_age_hours: 25
 
 # - Terraform -
 terraform:

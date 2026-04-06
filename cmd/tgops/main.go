@@ -13,6 +13,8 @@ import (
 	"github.com/WELIZARY/tgOps/internal/config"
 	"github.com/WELIZARY/tgOps/internal/modules"
 	"github.com/WELIZARY/tgOps/internal/modules/alerts"
+	"github.com/WELIZARY/tgOps/internal/modules/ansible"
+	"github.com/WELIZARY/tgOps/internal/modules/backups"
 	"github.com/WELIZARY/tgOps/internal/modules/cicd"
 	"github.com/WELIZARY/tgOps/internal/modules/core"
 	"github.com/WELIZARY/tgOps/internal/modules/docker"
@@ -20,6 +22,7 @@ import (
 	"github.com/WELIZARY/tgOps/internal/modules/network"
 	"github.com/WELIZARY/tgOps/internal/modules/ssl"
 	"github.com/WELIZARY/tgOps/internal/modules/system"
+	"github.com/WELIZARY/tgOps/internal/modules/updates"
 	internalssh "github.com/WELIZARY/tgOps/internal/ssh"
 	"github.com/WELIZARY/tgOps/internal/storage"
 )
@@ -69,6 +72,7 @@ func main() {
 	sslRepo := storage.NewSSLRepo(db)
 	serverRepo := storage.NewServerRepo(db)
 	pipelineRepo := storage.NewPipelineRepo(db)
+	ansibleRepo := storage.NewAnsibleRepo(db)
 
 	// Bootstrap первого администратора (если БД пустая)
 	if err := bootstrapAdmin(ctx, cfg, userRepo, log); err != nil {
@@ -113,6 +117,9 @@ func main() {
 	logsMod := logs.New(sshClient, serverSrc, &cfg.Logs, log)
 	dockerMod := docker.New(sshClient, serverSrc, &cfg.Docker, log)
 	cicdMod := cicd.New(pipelineRepo, cicdNotifier, log)
+	ansibleMod := ansible.New(&cfg.Ansible, ansibleRepo, log)
+	updatesMod := updates.New(sshClient, serverSrc, &cfg.Updates, log)
+	backupsMod := backups.New(sshClient, serverSrc, &cfg.Backups, log)
 
 	// Регистрируем модули
 	router.Register(coreModule)
@@ -123,6 +130,9 @@ func main() {
 	router.Register(logsMod)
 	router.Register(dockerMod)
 	router.Register(cicdMod)
+	router.Register(ansibleMod)
+	router.Register(updatesMod)
+	router.Register(backupsMod)
 
 	// Callback-обработчики (inline-кнопки)
 	router.RegisterCallback("ack_", alertsMod.HandleAck)
