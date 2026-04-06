@@ -19,6 +19,9 @@ type Config struct {
 	Logs         LogsConfig         `mapstructure:"logs"`
 	Docker       DockerConfig       `mapstructure:"docker"`
 	CICD         CICDConfig         `mapstructure:"cicd"`
+	Ansible      AnsibleConfig      `mapstructure:"ansible"`
+	Updates      UpdatesConfig      `mapstructure:"updates"`
+	Backups      BackupsConfig      `mapstructure:"backups"`
 }
 
 // TelegramConfig - настройки Telegram-бота
@@ -160,6 +163,52 @@ type CICDConfig struct {
 	NotifyChatID int64 `mapstructure:"notify_chat_id"`
 }
 
+// AnsibleConfig - настройки Ansible-модуля
+type AnsibleConfig struct {
+	// PlaybooksDir - директория с плейбуками (относительно рабочей директории)
+	PlaybooksDir string `mapstructure:"playbooks_dir"`
+	// InventoryPath - путь к inventory-файлу
+	InventoryPath string `mapstructure:"inventory_path"`
+	// Timeout - максимальное время выполнения одного плейбука (например "5m")
+	Timeout string `mapstructure:"timeout"`
+	// Playbooks - whitelist разрешённых плейбуков
+	Playbooks []PlaybookEntry `mapstructure:"playbooks"`
+}
+
+// PlaybookEntry - один разрешённый плейбук из whitelist
+type PlaybookEntry struct {
+	// Name - короткое имя для команды бота (например "deploy")
+	Name string `mapstructure:"name"`
+	// File - имя файла в PlaybooksDir (например "deploy.yml")
+	File string `mapstructure:"file"`
+	// Description - описание для /ansible playbooks
+	Description string `mapstructure:"description"`
+}
+
+// UpdatesConfig - настройки модуля проверки обновлений пакетов
+type UpdatesConfig struct {
+	// Timeout - таймаут SSH-команды проверки обновлений
+	Timeout string `mapstructure:"timeout"`
+}
+
+// BackupsConfig - настройки модуля проверки статуса бэкапов
+type BackupsConfig struct {
+	// Paths - список директорий для проверки на управляемых серверах
+	Paths []BackupPathConfig `mapstructure:"paths"`
+	// Timeout - таймаут SSH-команды
+	Timeout string `mapstructure:"timeout"`
+}
+
+// BackupPathConfig - одна директория с резервными копиями
+type BackupPathConfig struct {
+	// Name - читаемое имя (например "PostgreSQL")
+	Name string `mapstructure:"name"`
+	// Path - путь к директории на сервере (например "/var/backups/postgres")
+	Path string `mapstructure:"path"`
+	// MaxAgeHours - показывать предупреждение если последний файл старше N часов (0 - не проверять)
+	MaxAgeHours int `mapstructure:"max_age_hours"`
+}
+
 // Load загружает конфигурацию из YAML-файла.
 // Переменные окружения с префиксом TGOPS_ имеют приоритет над файлом.
 func Load(path string) (*Config, error) {
@@ -275,6 +324,27 @@ func validate(cfg *Config) error {
 	// дефолты для CI/CD
 	if cfg.CICD.WebhookPort == 0 {
 		cfg.CICD.WebhookPort = 8080
+	}
+
+	// дефолты для Ansible
+	if cfg.Ansible.PlaybooksDir == "" {
+		cfg.Ansible.PlaybooksDir = "playbooks"
+	}
+	if cfg.Ansible.InventoryPath == "" {
+		cfg.Ansible.InventoryPath = "inventory/hosts"
+	}
+	if cfg.Ansible.Timeout == "" {
+		cfg.Ansible.Timeout = "5m"
+	}
+
+	// дефолты для Updates
+	if cfg.Updates.Timeout == "" {
+		cfg.Updates.Timeout = "60s"
+	}
+
+	// дефолты для Backups
+	if cfg.Backups.Timeout == "" {
+		cfg.Backups.Timeout = "30s"
 	}
 
 	return nil

@@ -121,6 +121,26 @@ const (
 	PipelineStatusRejected = "rejected"
 )
 
+// AnsibleRun - запись о запуске Ansible-плейбука
+type AnsibleRun struct {
+	ID           int
+	PlaybookName string     // короткое имя из whitelist
+	PlaybookFile string     // имя файла плейбука
+	StartedBy    int        // FK users.id
+	Status       string     // running, success, failed
+	Output       string     // stdout+stderr ansible-playbook
+	StartedAt    time.Time
+	FinishedAt   *time.Time
+	DurationMs   int
+}
+
+// статусы запуска плейбука
+const (
+	AnsibleRunRunning = "running"
+	AnsibleRunSuccess = "success"
+	AnsibleRunFailed  = "failed"
+)
+
 // - Хелперы для передачи User через context -
 
 type contextKey string
