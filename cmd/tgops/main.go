@@ -19,6 +19,8 @@ import (
 	"github.com/WELIZARY/tgOps/internal/modules/core"
 	"github.com/WELIZARY/tgOps/internal/modules/cron"
 	"github.com/WELIZARY/tgOps/internal/modules/docker"
+	"github.com/WELIZARY/tgOps/internal/modules/scan"
+	"github.com/WELIZARY/tgOps/internal/modules/versions"
 	"github.com/WELIZARY/tgOps/internal/modules/logs"
 	"github.com/WELIZARY/tgOps/internal/modules/network"
 	"github.com/WELIZARY/tgOps/internal/modules/ssl"
@@ -122,7 +124,9 @@ func main() {
 	ansibleMod := ansible.New(&cfg.Ansible, ansibleRepo, log)
 	updatesMod := updates.New(sshClient, serverSrc, &cfg.Updates, log)
 	backupsMod := backups.New(sshClient, serverSrc, &cfg.Backups, log)
-	cronMod := cron.New(sshClient, serverSrc, &cfg.Cron, cronRepo, log)
+	cronMod     := cron.New(sshClient, serverSrc, &cfg.Cron, cronRepo, log)
+	scanMod     := scan.New(sshClient, serverSrc, &cfg.Scan, log)
+	versionsMod := versions.New(sshClient, serverSrc, &cfg.Versions, log)
 
 	// Регистрируем модули
 	router.Register(coreModule)
@@ -137,6 +141,8 @@ func main() {
 	router.Register(updatesMod)
 	router.Register(backupsMod)
 	router.Register(cronMod)
+	router.Register(scanMod)
+	router.Register(versionsMod)
 
 	// Callback-обработчики (inline-кнопки)
 	router.RegisterCallback("ack_", alertsMod.HandleAck)

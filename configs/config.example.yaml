@@ -145,15 +145,16 @@ backups:
       path: "/var/backups/app"
       max_age_hours: 25
 
-# - Terraform -
-terraform:
-  binary: "terraform"
-  working_dir: "/opt/terraform/infra"
-  apply_requires_admin: true
-  drift_check_interval: "6h"
+# - Планировщик cron-задач -
+cron:
+  timeout: "15s"
 
-# - Планировщик отчётов -
-scheduler:
-  timezone: "Europe/Moscow"
-  daily_health_cron: "0 9 * * *"
-  weekly_audit_cron: "0 10 * * 1"
+# - Сканирование уязвимостей -
+scan:
+  timeout: "5m"
+  trivy_image: "aquasec/trivy:latest"
+
+# - Проверка версий ПО -
+versions:
+  timeout: "30s"
+  packages: []  # пусто - стандартный набор (docker, ansible, go, nginx, postgres...)
