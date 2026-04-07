@@ -141,6 +141,21 @@ const (
 	AnsibleRunFailed  = "failed"
 )
 
+// CronSnapshot - снапшот cron-задач или systemd-таймеров с сервера
+type CronSnapshot struct {
+	ID          int
+	ServerName  string
+	Source      string    // crontab или systemd
+	RawOutput   string
+	CollectedAt time.Time
+}
+
+// источники снапшотов cron
+const (
+	CronSourceCrontab = "crontab"
+	CronSourceSystemd = "systemd"
+)
+
 // - Хелперы для передачи User через context -
 
 type contextKey string
