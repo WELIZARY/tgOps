@@ -17,6 +17,7 @@ import (
 	"github.com/WELIZARY/tgOps/internal/modules/backups"
 	"github.com/WELIZARY/tgOps/internal/modules/cicd"
 	"github.com/WELIZARY/tgOps/internal/modules/core"
+	"github.com/WELIZARY/tgOps/internal/modules/cron"
 	"github.com/WELIZARY/tgOps/internal/modules/docker"
 	"github.com/WELIZARY/tgOps/internal/modules/logs"
 	"github.com/WELIZARY/tgOps/internal/modules/network"
@@ -73,6 +74,7 @@ func main() {
 	serverRepo := storage.NewServerRepo(db)
 	pipelineRepo := storage.NewPipelineRepo(db)
 	ansibleRepo := storage.NewAnsibleRepo(db)
+	cronRepo := storage.NewCronRepo(db)
 
 	// Bootstrap первого администратора (если БД пустая)
 	if err := bootstrapAdmin(ctx, cfg, userRepo, log); err != nil {
@@ -120,6 +122,7 @@ func main() {
 	ansibleMod := ansible.New(&cfg.Ansible, ansibleRepo, log)
 	updatesMod := updates.New(sshClient, serverSrc, &cfg.Updates, log)
 	backupsMod := backups.New(sshClient, serverSrc, &cfg.Backups, log)
+	cronMod := cron.New(sshClient, serverSrc, &cfg.Cron, cronRepo, log)
 
 	// Регистрируем модули
 	router.Register(coreModule)
@@ -133,6 +136,7 @@ func main() {
 	router.Register(ansibleMod)
 	router.Register(updatesMod)
 	router.Register(backupsMod)
+	router.Register(cronMod)
 
 	// Callback-обработчики (inline-кнопки)
 	router.RegisterCallback("ack_", alertsMod.HandleAck)
