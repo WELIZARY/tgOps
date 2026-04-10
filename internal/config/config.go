@@ -22,6 +22,9 @@ type Config struct {
 	Ansible      AnsibleConfig      `mapstructure:"ansible"`
 	Updates      UpdatesConfig      `mapstructure:"updates"`
 	Backups      BackupsConfig      `mapstructure:"backups"`
+	Cron         CronConfig         `mapstructure:"cron"`
+	Scan         ScanConfig         `mapstructure:"scan"`
+	Versions     VersionsConfig     `mapstructure:"versions"`
 }
 
 // TelegramConfig - настройки Telegram-бота
@@ -209,6 +212,28 @@ type BackupPathConfig struct {
 	MaxAgeHours int `mapstructure:"max_age_hours"`
 }
 
+// CronConfig - настройки модуля просмотра cron-задач и systemd-таймеров
+type CronConfig struct {
+	// Timeout - таймаут SSH-команды сбора расписания
+	Timeout string `mapstructure:"timeout"`
+}
+
+// ScanConfig - настройки модуля сканирования уязвимостей
+type ScanConfig struct {
+	// Timeout - таймаут сканирования (trivy и lynis работают долго)
+	Timeout string `mapstructure:"timeout"`
+	// TrivyImage - образ trivy для запуска через docker run на сервере
+	TrivyImage string `mapstructure:"trivy_image"`
+}
+
+// VersionsConfig - настройки модуля проверки версий установленного ПО
+type VersionsConfig struct {
+	// Timeout - таймаут SSH-команды
+	Timeout string `mapstructure:"timeout"`
+	// Packages - список инструментов для проверки (пусто - стандартный набор)
+	Packages []string `mapstructure:"packages"`
+}
+
 // Load загружает конфигурацию из YAML-файла.
 // Переменные окружения с префиксом TGOPS_ имеют приоритет над файлом.
 func Load(path string) (*Config, error) {
@@ -345,6 +370,24 @@ func validate(cfg *Config) error {
 	// дефолты для Backups
 	if cfg.Backups.Timeout == "" {
 		cfg.Backups.Timeout = "30s"
+	}
+
+	// дефолты для Cron
+	if cfg.Cron.Timeout == "" {
+		cfg.Cron.Timeout = "15s"
+	}
+
+	// дефолты для Scan
+	if cfg.Scan.Timeout == "" {
+		cfg.Scan.Timeout = "5m"
+	}
+	if cfg.Scan.TrivyImage == "" {
+		cfg.Scan.TrivyImage = "aquasec/trivy:latest"
+	}
+
+	// дефолты для Versions
+	if cfg.Versions.Timeout == "" {
+		cfg.Versions.Timeout = "30s"
 	}
 
 	return nil
