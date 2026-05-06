@@ -312,6 +312,97 @@ keys_show_pub() {
 }
 
 
+#! Алерты (таблица alerts)
+
+
+# показать последние алерты
+alert_list() {
+    check_stack
+    local limit="${1:-20}"
+    info "последние $limit алертов:"
+    separator
+    pg_table "SELECT id, server_name, alert_type, severity, substring(message for 60) AS message, acknowledged AS ack, created_at::timestamp(0) FROM alerts ORDER BY created_at DESC LIMIT $limit;"
+}
+
+# только неподтвержденные алерты
+alert_unacked() {
+    check_stack
+    info "неподтвержденные алерты:"
+    separator
+    pg_table "SELECT id, server_name, alert_type, severity, substring(message for 60) AS message, created_at::timestamp(0) FROM alerts WHERE NOT acknowledged ORDER BY created_at DESC;"
+}
+
+# подтвердить алерт (один или все сразу)
+alert_ack() {
+    check_stack
+    alert_unacked
+    separator
+    read -rp "id алерта (или 'all' для всех): " alert_id
+
+    if [[ "$alert_id" == "all" ]]; then
+        confirm "подтвердить все алерты?"
+        count=$(pg_query "UPDATE alerts SET acknowledged = true, ack_at = now() WHERE NOT acknowledged RETURNING id;" | wc -l)
+        ok "подтверждено алертов: $count"
+    else
+        [[ "$alert_id" =~ ^[0-9]+$ ]] || die "id должен быть числом"
+        pg_query "UPDATE alerts SET acknowledged = true, ack_at = now() WHERE id = $alert_id;" >/dev/null
+        ok "алерт #$alert_id подтвержден"
+    fi
+}
+
+# удалить старые алерты
+alert_cleanup() {
+    check_stack
+    read -rp "удалить алерты старше скольки дней? [30]: " days
+    days="${days:-30}"
+    [[ "$days" =~ ^[0-9]+$ ]] || die "количество дней должно быть числом"
+
+    confirm "удалить алерты старше $days дней?"
+    count=$(pg_query "DELETE FROM alerts WHERE created_at < now() - interval '$days days' RETURNING id;" | wc -l)
+    ok "удалено алертов: $count"
+}
+
+# статистика алертов за неделю
+alert_stats() {
+    check_stack
+    info "статистика алертов за последние 7 дней:"
+    separator
+    pg_table "SELECT server_name, alert_type, severity, count(*) AS cnt FROM alerts WHERE created_at > now() - interval '7 days' GROUP BY server_name, alert_type, severity ORDER BY cnt DESC;"
+}
+
+
+#! Аудит лог (таблица audit_log)
+
+
+# последние записи аудита
+audit_list() {
+    check_stack
+    local limit="${1:-30}"
+    info "последние $limit записей аудит-лога:"
+    separator
+    pg_table "SELECT a.id, u.username, u.telegram_id AS tg_id, a.command, substring(a.args for 40) AS args, a.result, a.duration_ms AS ms, a.created_at::timestamp(0) FROM audit_log a LEFT JOIN users u ON u.id = a.user_id ORDER BY a.created_at DESC LIMIT $limit;"
+}
+
+# поиск по аудиту с фильтрами
+audit_search() {
+    check_stack
+    echo "поиск по аудит-логу. оставь пустым чтобы пропустить фильтр."
+    read -rp "команда (напр. /status): " cmd_filter
+    read -rp "telegram id пользователя: " tg_filter
+    read -rp "результат (success/error/denied): " result_filter
+    read -rp "за последние N дней [7]: " days
+    days="${days:-7}"
+
+    # собираем where
+    where="WHERE a.created_at > now() - interval '$days days'"
+    [[ -n "$cmd_filter" ]]    && where="$where AND a.command ILIKE '%$cmd_filter%'"
+    [[ -n "$tg_filter" ]]     && where="$where AND u.telegram_id = $tg_filter"
+    [[ -n "$result_filter" ]] && where="$where AND a.result = '$result_filter'"
+
+    pg_table "SELECT a.id, u.username, a.command, a.args, a.result, a.duration_ms AS ms, a.created_at::timestamp(0) FROM audit_log a LEFT JOIN users u ON u.id = a.user_id $where ORDER BY a.created_at DESC LIMIT 50;"
+}
+
+
 #!Справка
 
 
@@ -337,6 +428,17 @@ show_help() {
     echo "  keys:list              показать ключи"
     echo "  keys:generate          сгенерировать новый ключ"
     echo "  keys:pub               показать публичный ключ"
+    echo ""
+    echo -e "${CYAN}--- алерты ---${NC}"
+    echo "  alert:list [N]         последние N алертов (по умолчанию 20)"
+    echo "  alert:unacked          неподтвержденные алерты"
+    echo "  alert:ack              подтвердить алерт"
+    echo "  alert:cleanup          удалить старые алерты"
+    echo "  alert:stats            статистика за 7 дней"
+    echo ""
+    echo -e "${CYAN}--- аудит ---${NC}"
+    echo "  audit:list [N]         последние N записей аудита"
+    echo "  audit:search           поиск по аудит-логу"
 }
 
 
@@ -351,6 +453,8 @@ interactive_menu() {
         echo -e "  ${CYAN}1)${NC}  пользователи"
         echo -e "  ${CYAN}2)${NC}  серверы"
         echo -e "  ${CYAN}3)${NC}  ssh ключи"
+        echo -e "  ${CYAN}4)${NC}  алерты"
+        echo -e "  ${CYAN}5)${NC}  аудит лог"
         echo -e "  ${CYAN}0)${NC}  выход"
         echo ""
         read -rp "выбор: " section
@@ -392,6 +496,29 @@ interactive_menu() {
                     *) warn "неизвестный выбор" ;;
                 esac
                 ;;
+            4)
+                echo ""
+                echo "  1) все    2) неподтв.    3) подтвердить    4) очистить    5) статистика"
+                read -rp "  выбор: " act
+                case "$act" in
+                    1) alert_list ;;
+                    2) alert_unacked ;;
+                    3) alert_ack ;;
+                    4) alert_cleanup ;;
+                    5) alert_stats ;;
+                    *) warn "неизвестный выбор" ;;
+                esac
+                ;;
+            5)
+                echo ""
+                echo "  1) список    2) поиск"
+                read -rp "  выбор: " act
+                case "$act" in
+                    1) audit_list ;;
+                    2) audit_search ;;
+                    *) warn "неизвестный выбор" ;;
+                esac
+                ;;
             0) info "пока!"; exit 0 ;;
             *) warn "неизвестный раздел" ;;
         esac
@@ -426,6 +553,15 @@ case "$command" in
     keys:list)      keys_list ;;
     keys:generate)  keys_generate ;;
     keys:pub)       keys_show_pub ;;
+
+    alert:list)     alert_list "${1:-20}" ;;
+    alert:unacked)  alert_unacked ;;
+    alert:ack)      alert_ack ;;
+    alert:cleanup)  alert_cleanup ;;
+    alert:stats)    alert_stats ;;
+
+    audit:list)     audit_list "${1:-30}" ;;
+    audit:search)   audit_search ;;
 
     help|--help|-h) show_help ;;
 
