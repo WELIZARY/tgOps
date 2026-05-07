@@ -403,6 +403,56 @@ audit_search() {
 }
 
 
+#! SSL проверки (таблица ssl_checks)
+
+
+# последняя проверка по каждому домену
+ssl_list() {
+    check_stack
+    info "последние проверки ssl сертификатов:"
+    separator
+    pg_table "SELECT DISTINCT ON (domain) domain, issuer, expires_at::date, days_left, status, checked_at::timestamp(0) FROM ssl_checks ORDER BY domain, checked_at DESC;"
+}
+
+
+#! CI/CD пайплайны (таблица pipeline_events)
+
+
+# последние события пайплайнов
+pipeline_list() {
+    check_stack
+    local limit="${1:-15}"
+    info "последние $limit событий ci/cd:"
+    separator
+    pg_table "SELECT id, source, repo, branch, status, author, created_at::timestamp(0) FROM pipeline_events ORDER BY created_at DESC LIMIT $limit;"
+}
+
+
+#! Ansible запуски (таблица ansible_runs)
+
+
+# история запусков плейбуков
+ansible_list() {
+    check_stack
+    local limit="${1:-15}"
+    info "последние $limit запусков ansible:"
+    separator
+    pg_table "SELECT r.id, r.playbook_name, r.playbook_file, u.username AS started_by, r.status, r.duration_ms AS ms, r.started_at::timestamp(0) FROM ansible_runs r LEFT JOIN users u ON u.id = r.started_by ORDER BY r.started_at DESC LIMIT $limit;"
+}
+
+
+#! Cron снапшоты (таблица cron_snapshots)
+
+
+# последние снапшоты cron/systemd с серверов
+cron_list() {
+    check_stack
+    info "последние снапшоты cron/systemd:"
+    separator
+    pg_table "SELECT DISTINCT ON (server_name, source) server_name, source, substring(raw_output for 80) AS preview, collected_at::timestamp(0) FROM cron_snapshots ORDER BY server_name, source, collected_at DESC;"
+}
+
+
 #!Справка
 
 
@@ -439,6 +489,18 @@ show_help() {
     echo -e "${CYAN}--- аудит ---${NC}"
     echo "  audit:list [N]         последние N записей аудита"
     echo "  audit:search           поиск по аудит-логу"
+    echo ""
+    echo -e "${CYAN}--- ssl ---${NC}"
+    echo "  ssl:list               последние проверки сертификатов"
+    echo ""
+    echo -e "${CYAN}--- ci/cd ---${NC}"
+    echo "  pipeline:list [N]      последние события пайплайнов"
+    echo ""
+    echo -e "${CYAN}--- ansible ---${NC}"
+    echo "  ansible:list [N]       последние запуски плейбуков"
+    echo ""
+    echo -e "${CYAN}--- cron ---${NC}"
+    echo "  cron:list              последние снапшоты cron задач"
 }
 
 
@@ -455,6 +517,10 @@ interactive_menu() {
         echo -e "  ${CYAN}3)${NC}  ssh ключи"
         echo -e "  ${CYAN}4)${NC}  алерты"
         echo -e "  ${CYAN}5)${NC}  аудит лог"
+        echo -e "  ${CYAN}6)${NC}  ssl проверки"
+        echo -e "  ${CYAN}7)${NC}  ci/cd пайплайны"
+        echo -e "  ${CYAN}8)${NC}  ansible запуски"
+        echo -e "  ${CYAN}9)${NC}  cron задачи"
         echo -e "  ${CYAN}0)${NC}  выход"
         echo ""
         read -rp "выбор: " section
@@ -519,6 +585,10 @@ interactive_menu() {
                     *) warn "неизвестный выбор" ;;
                 esac
                 ;;
+            6) ssl_list ;;
+            7) pipeline_list ;;
+            8) ansible_list ;;
+            9) cron_list ;;
             0) info "пока!"; exit 0 ;;
             *) warn "неизвестный раздел" ;;
         esac
@@ -562,6 +632,14 @@ case "$command" in
 
     audit:list)     audit_list "${1:-30}" ;;
     audit:search)   audit_search ;;
+
+    ssl:list)       ssl_list ;;
+
+    pipeline:list)  pipeline_list "${1:-15}" ;;
+
+    ansible:list)   ansible_list "${1:-15}" ;;
+
+    cron:list)      cron_list ;;
 
     help|--help|-h) show_help ;;
 
