@@ -11,6 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMPOSE="docker compose -f $PROJECT_ROOT/deployments/docker-compose.yml"
 CONFIG="$PROJECT_ROOT/configs/config.yaml"
+ENV_FILE="$PROJECT_ROOT/.env"
 KEYS_DIR="$PROJECT_ROOT/keys"
 
 # цвета
@@ -453,6 +454,182 @@ cron_list() {
 }
 
 
+#! Конфигурация (config.yaml и .env)
+
+
+# показать текущий конфиг
+config_show() {
+    info "текущий config.yaml:"
+    separator
+    cat "$CONFIG"
+}
+
+# открыть конфиг в редакторе
+config_edit() {
+    local editor="${EDITOR:-nano}"
+    info "открываю config.yaml в $editor"
+    "$editor" "$CONFIG"
+    warn "перезапусти бота чтобы применить: make docker-restart"
+}
+
+# показать .env с замаскированными секретами
+config_env() {
+    info "содержимое .env (секреты замаскированы):"
+    separator
+    if [[ -f "$ENV_FILE" ]]; then
+        while IFS= read -r line; do
+            # маскируем значения после первых 4 символов
+            if [[ "$line" =~ ^[A-Z_]+=.+ ]]; then
+                key="${line%%=*}"
+                val="${line#*=}"
+                if [[ ${#val} -gt 4 ]]; then
+                    echo "$key=${val:0:4}****"
+                else
+                    echo "$key=****"
+                fi
+            else
+                echo "$line"
+            fi
+        done < "$ENV_FILE"
+    else
+        warn ".env не найден, скопируй из .env.example"
+    fi
+}
+
+# открыть .env в редакторе
+config_env_edit() {
+    local editor="${EDITOR:-nano}"
+    info "открываю .env в $editor"
+    "$editor" "$ENV_FILE"
+    warn "перезапусти бота чтобы применить: make docker-restart"
+}
+
+# изменить порог мониторинга
+config_threshold() {
+    info "текущие пороги мониторинга:"
+    separator
+    grep -A8 "thresholds:" "$CONFIG" | head -9
+    separator
+
+    echo "параметры: cpu_warning, cpu_critical, ram_warning, ram_critical, disk_warning, disk_critical"
+    read -rp "параметр: " param
+    [[ "$param" =~ ^(cpu|ram|disk)_(warning|critical)$ ]] || die "неизвестный параметр"
+
+    read -rp "новое значение (0-100): " val
+    [[ "$val" =~ ^[0-9]+$ ]] && (( val >= 0 && val <= 100 )) || die "значение должно быть числом от 0 до 100"
+
+    sed -i "s/\($param:\s*\)[0-9]*/\1$val/" "$CONFIG"
+    ok "$param установлен в $val"
+    warn "перезапусти бота: make docker-restart"
+}
+
+# изменить интервал мониторинга
+config_interval() {
+    info "текущий интервал мониторинга:"
+    grep "interval:" "$CONFIG" | head -1
+    separator
+
+    read -rp "новый интервал (напр. 30s, 60s, 5m): " interval
+    [[ "$interval" =~ ^[0-9]+(s|m|h)$ ]] || die "формат: число + s/m/h (напр. 60s)"
+
+    sed -i "/^monitoring:/,/^[a-z]/{s/\(interval:\s*\"\)[^\"]*\"/\1$interval\"/}" "$CONFIG"
+    ok "интервал мониторинга: $interval"
+    warn "перезапусти бота: make docker-restart"
+}
+
+# управление ssl доменами в конфиге
+config_ssl_domains() {
+    info "ssl домены в конфиге:"
+    separator
+    grep -A20 "^ssl:" "$CONFIG" | grep -E "^\s+- " | head -20
+    separator
+
+    echo "1) добавить домен"
+    echo "2) назад"
+    read -rp "выбор: " choice
+
+    case "$choice" in
+        1)
+            read -rp "домен (напр. example.com): " domain
+            [[ -n "$domain" ]] || die "домен не может быть пустым"
+            sed -i "/^ssl:/,/^[a-z]/{/domains:/a\\    - \"$domain\"}" "$CONFIG"
+            ok "домен $domain добавлен в ssl.domains"
+            warn "перезапусти бота: make docker-restart"
+            ;;
+        *) return ;;
+    esac
+}
+
+# управление разрешенными сервисами для логов
+config_log_services() {
+    info "разрешенные сервисы для логов:"
+    separator
+    grep -A20 "^logs:" "$CONFIG" | grep -E "^\s+- " | head -20
+    separator
+
+    echo "1) добавить сервис"
+    echo "2) назад"
+    read -rp "выбор: " choice
+
+    case "$choice" in
+        1)
+            read -rp "имя сервиса (напр. nginx, postgresql): " svc
+            [[ -n "$svc" ]] || die "имя не может быть пустым"
+            sed -i "/allowed_services:/a\\    - \"$svc\"" "$CONFIG"
+            ok "сервис '$svc' добавлен в allowed_services"
+            warn "перезапусти бота: make docker-restart"
+            ;;
+        *) return ;;
+    esac
+}
+
+# показать health check эндпоинты
+config_health() {
+    info "health check эндпоинты:"
+    separator
+    grep -A50 "^health_checks:" "$CONFIG" | grep -B1 -A3 "name:" | head -30
+    separator
+}
+
+# управление ansible плейбуками в конфиге
+config_ansible() {
+    info "ansible плейбуки в конфиге:"
+    separator
+    grep -A50 "^ansible:" "$CONFIG" | grep -B0 -A3 "- name:" | head -30
+    separator
+
+    echo "1) добавить плейбук в whitelist"
+    echo "2) назад"
+    read -rp "выбор: " choice
+
+    case "$choice" in
+        1)
+            read -rp "короткое имя (напр. deploy-app): " pb_name
+            read -rp "имя файла (напр. deploy-app.yml): " pb_file
+            read -rp "описание: " pb_desc
+
+            cat >> "$CONFIG" <<YAML_BLOCK
+    - name: "$pb_name"
+      file: "$pb_file"
+      description: "$pb_desc"
+YAML_BLOCK
+            warn "запись добавлена в конец файла, проверь что она в секции ansible.playbooks"
+            ok "плейбук добавлен"
+            warn "перезапусти бота: make docker-restart"
+            ;;
+        *) return ;;
+    esac
+}
+
+# показать пути бэкапов
+config_backups() {
+    info "пути бэкапов в конфиге:"
+    separator
+    grep -A30 "^backups:" "$CONFIG" | grep -B0 -A3 "- name:" | head -30
+    separator
+}
+
+
 #!Справка
 
 
@@ -501,6 +678,19 @@ show_help() {
     echo ""
     echo -e "${CYAN}--- cron ---${NC}"
     echo "  cron:list              последние снапшоты cron задач"
+    echo ""
+    echo -e "${CYAN}--- конфигурация ---${NC}"
+    echo "  config:show            показать config.yaml"
+    echo "  config:edit            открыть config.yaml в редакторе"
+    echo "  config:env             показать .env (секреты замаскированы)"
+    echo "  config:env-edit        редактировать .env"
+    echo "  config:threshold       изменить пороги мониторинга"
+    echo "  config:interval        изменить интервал мониторинга"
+    echo "  config:ssl             управление ssl доменами"
+    echo "  config:logs            управление сервисами логов"
+    echo "  config:health          показать health check эндпоинты"
+    echo "  config:ansible         управление ansible плейбуками"
+    echo "  config:backups         показать пути бэкапов"
 }
 
 
@@ -521,6 +711,7 @@ interactive_menu() {
         echo -e "  ${CYAN}7)${NC}  ci/cd пайплайны"
         echo -e "  ${CYAN}8)${NC}  ansible запуски"
         echo -e "  ${CYAN}9)${NC}  cron задачи"
+        echo -e "  ${CYAN}10)${NC} конфигурация"
         echo -e "  ${CYAN}0)${NC}  выход"
         echo ""
         read -rp "выбор: " section
@@ -589,6 +780,28 @@ interactive_menu() {
             7) pipeline_list ;;
             8) ansible_list ;;
             9) cron_list ;;
+            10)
+                echo ""
+                echo "  1) показать config    2) редактировать config    3) .env"
+                echo "  4) .env редактировать  5) пороги мониторинга    6) интервал"
+                echo "  7) ssl домены          8) сервисы логов         9) health checks"
+                echo "  10) ansible плейбуки   11) пути бэкапов"
+                read -rp "  выбор: " act
+                case "$act" in
+                    1)  config_show ;;
+                    2)  config_edit ;;
+                    3)  config_env ;;
+                    4)  config_env_edit ;;
+                    5)  config_threshold ;;
+                    6)  config_interval ;;
+                    7)  config_ssl_domains ;;
+                    8)  config_log_services ;;
+                    9)  config_health ;;
+                    10) config_ansible ;;
+                    11) config_backups ;;
+                    *) warn "неизвестный выбор" ;;
+                esac
+                ;;
             0) info "пока!"; exit 0 ;;
             *) warn "неизвестный раздел" ;;
         esac
@@ -640,6 +853,18 @@ case "$command" in
     ansible:list)   ansible_list "${1:-15}" ;;
 
     cron:list)      cron_list ;;
+
+    config:show)      config_show ;;
+    config:edit)      config_edit ;;
+    config:env)       config_env ;;
+    config:env-edit)  config_env_edit ;;
+    config:threshold) config_threshold ;;
+    config:interval)  config_interval ;;
+    config:ssl)       config_ssl_domains ;;
+    config:logs)      config_log_services ;;
+    config:health)    config_health ;;
+    config:ansible)   config_ansible ;;
+    config:backups)   config_backups ;;
 
     help|--help|-h) show_help ;;
 
