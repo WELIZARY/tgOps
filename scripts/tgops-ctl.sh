@@ -630,6 +630,75 @@ config_backups() {
 }
 
 
+#! База данных
+
+
+# открыть psql в контейнере
+db_shell() {
+    check_stack
+    info "открываю psql..."
+    $COMPOSE exec postgres psql -U tgops -d tgops
+}
+
+# размер таблиц и количество строк
+db_sizes() {
+    check_stack
+    info "размер таблиц:"
+    separator
+    pg_table "SELECT relname AS table_name, pg_size_pretty(pg_total_relation_size(relid)) AS size, n_live_tup AS rows FROM pg_stat_user_tables ORDER BY pg_total_relation_size(relid) DESC;"
+}
+
+# дамп базы в файл
+db_dump() {
+    check_stack
+    local dump_file="$PROJECT_ROOT/backup_tgops_$(date +%Y%m%d_%H%M%S).sql"
+    info "создаю дамп базы..."
+    $COMPOSE exec -T postgres pg_dump -U tgops -d tgops > "$dump_file"
+    ok "дамп сохранен: $dump_file"
+}
+
+# произвольный sql запрос (только select)
+db_query() {
+    check_stack
+    read -rp "sql запрос (только SELECT): " query
+    if ! echo "$query" | grep -iq "^select"; then
+        die "разрешены только SELECT запросы. для изменений используй db:shell"
+    fi
+    pg_table "$query"
+}
+
+
+#! Docker стек
+
+
+# статус контейнеров
+stack_status() {
+    info "статус контейнеров:"
+    separator
+    $COMPOSE ps
+}
+
+# логи бота
+stack_logs() {
+    local lines="${1:-50}"
+    $COMPOSE logs --tail "$lines" tgops
+}
+
+# перезапустить бота (применяет изменения конфига)
+stack_restart() {
+    confirm "перезапустить бота?"
+    $COMPOSE restart tgops
+    ok "бот перезапущен"
+}
+
+# пересобрать образ и перезапустить (применяет изменения кода)
+stack_rebuild() {
+    confirm "пересобрать и перезапустить бота?"
+    $COMPOSE up -d --build tgops
+    ok "бот пересобран и запущен"
+}
+
+
 #!Справка
 
 
@@ -691,6 +760,18 @@ show_help() {
     echo "  config:health          показать health check эндпоинты"
     echo "  config:ansible         управление ansible плейбуками"
     echo "  config:backups         показать пути бэкапов"
+    echo ""
+    echo -e "${CYAN}--- база данных ---${NC}"
+    echo "  db:shell               открыть psql"
+    echo "  db:sizes               размер таблиц"
+    echo "  db:dump                дамп базы данных"
+    echo "  db:query               выполнить SELECT запрос"
+    echo ""
+    echo -e "${CYAN}--- docker стек ---${NC}"
+    echo "  stack:status           статус контейнеров"
+    echo "  stack:logs [N]         логи бота (последние N строк)"
+    echo "  stack:restart          перезапустить бота"
+    echo "  stack:rebuild          пересобрать и перезапустить"
 }
 
 
@@ -712,6 +793,8 @@ interactive_menu() {
         echo -e "  ${CYAN}8)${NC}  ansible запуски"
         echo -e "  ${CYAN}9)${NC}  cron задачи"
         echo -e "  ${CYAN}10)${NC} конфигурация"
+        echo -e "  ${CYAN}11)${NC} база данных"
+        echo -e "  ${CYAN}12)${NC} docker стек"
         echo -e "  ${CYAN}0)${NC}  выход"
         echo ""
         read -rp "выбор: " section
@@ -802,6 +885,30 @@ interactive_menu() {
                     *) warn "неизвестный выбор" ;;
                 esac
                 ;;
+            11)
+                echo ""
+                echo "  1) psql    2) размер таблиц    3) дамп    4) sql запрос"
+                read -rp "  выбор: " act
+                case "$act" in
+                    1) db_shell ;;
+                    2) db_sizes ;;
+                    3) db_dump ;;
+                    4) db_query ;;
+                    *) warn "неизвестный выбор" ;;
+                esac
+                ;;
+            12)
+                echo ""
+                echo "  1) статус    2) логи    3) перезапуск    4) пересборка"
+                read -rp "  выбор: " act
+                case "$act" in
+                    1) stack_status ;;
+                    2) stack_logs ;;
+                    3) stack_restart ;;
+                    4) stack_rebuild ;;
+                    *) warn "неизвестный выбор" ;;
+                esac
+                ;;
             0) info "пока!"; exit 0 ;;
             *) warn "неизвестный раздел" ;;
         esac
@@ -865,6 +972,16 @@ case "$command" in
     config:health)    config_health ;;
     config:ansible)   config_ansible ;;
     config:backups)   config_backups ;;
+
+    db:shell)       db_shell ;;
+    db:sizes)       db_sizes ;;
+    db:dump)        db_dump ;;
+    db:query)       db_query ;;
+
+    stack:status)   stack_status ;;
+    stack:logs)     stack_logs "${1:-50}" ;;
+    stack:restart)  stack_restart ;;
+    stack:rebuild)  stack_rebuild ;;
 
     help|--help|-h) show_help ;;
 
