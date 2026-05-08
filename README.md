@@ -20,7 +20,7 @@ Telegram-бот для управления и мониторинга серве
 | Планировщик задач (cron/systemd timers) | ✔ |
 | Сканирование уязвимостей (trivy/lynis) | ✔ |
 | Проверка версий ключевого ПО | ✔ |
-| Bash-скрипт управления инфрой (пользователи, VM, конфиги) | Планируется |
+| Bash-скрипт управления инфрой (пользователи, VM, конфиги) | ✔ |
 
 ## Возможности
 
@@ -69,12 +69,54 @@ Telegram-бот для управления и мониторинга серве
                         └────────────────┘      └────────────────┘
 ```
 ## Требования
-Golang (v.1.26.1)
-Docker (версия 20+)
-Docker Compose v2
-Git
-Make (опционально)
-Ansible (для модуля /ansible — должен быть установлен на хосте с ботом)
+
+* Go 1.26+
+* Docker 20+
+* Docker Compose v2
+* Git
+* Make (опционально)
+* Ansible (для модуля /ansible — должен быть установлен на хосте с ботом)
+
+```bash
+# проверяем что всё на месте
+go version          # go1.26 или выше
+docker --version    # Docker 20+
+docker compose version  # v2.x
+git --version
+make --version      # опционально
+ansible --version   # опционально, только для модуля /ansible
+
+# установка 
+
+# go (если нет или версия старая)
+# актуальную ссылку бери на https://go.dev/dl/
+wget https://go.dev/dl/go1.26.2.linux-amd64.tar.gz
+sudo rm -rf /usr/local/go
+sudo tar -C /usr/local -xzf go1.26.2.linux-amd64.tar.gz
+echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+source ~/.bashrc
+
+# docker + compose
+sudo apt update
+sudo apt install -y ca-certificates curl gnupg
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+  https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+# добавляем текущего пользователя в группу docker (чтобы без sudo)
+sudo usermod -aG docker $USER
+newgrp docker
+
+# make
+sudo apt install -y make
+
+# ansible (если нужен модуль /ansible)
+sudo apt install -y ansible
+```
 
 ## Первоначальная настройка
 
