@@ -40,11 +40,55 @@ func (m *Module) Commands() []modules.BotCommand {
 func (m *Module) Handle(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbotapi.Message) error {
 	args := strings.Fields(msg.CommandArguments())
 
+	// без аргументов - показываем кнопки выбора сервера
+	if len(args) == 0 {
+		return m.askServer(ctx, bot, msg.Chat.ID)
+	}
+
 	srv, err := m.resolveServer(ctx, args)
 	if err != nil {
 		return replyText(bot, msg.Chat.ID, err.Error())
 	}
+	return m.executeFor(ctx, bot, msg.Chat.ID, srv)
+}
 
+// HandleCallback обрабатывает нажатие кнопки выбора сервера.
+// callback data: "updates_<server-name>"
+func (m *Module) HandleCallback(ctx context.Context, bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) error {
+	name := strings.TrimPrefix(query.Data, "updates_")
+	_, _ = bot.Request(tgbotapi.NewCallback(query.ID, ""))
+
+	// убираем кнопки в исходном сообщении
+	hideKeyboard(bot, query)
+
+	servers, _ := m.src.GetServers(ctx)
+	var srv *storage.Server
+	for _, s := range servers {
+		if s.Name == name {
+			srv = s
+			break
+		}
+	}
+	if srv == nil {
+		return replyText(bot, query.Message.Chat.ID, fmt.Sprintf("Сервер %q не найден", name))
+	}
+	return m.executeFor(ctx, bot, query.Message.Chat.ID, srv)
+}
+
+// askServer показывает inline-клавиатуру выбора сервера
+func (m *Module) askServer(ctx context.Context, bot *tgbotapi.BotAPI, chatID int64) error {
+	servers, err := m.src.GetServers(ctx)
+	if err != nil || len(servers) == 0 {
+		return replyText(bot, chatID, "Серверы не настроены.")
+	}
+	msg := tgbotapi.NewMessage(chatID, "Выберите сервер для /updates:")
+	msg.ReplyMarkup = formatter.ServerKeyboard(servers, "updates_")
+	_, err = bot.Send(msg)
+	return err
+}
+
+// executeFor запускает проверку обновлений на указанном сервере и отправляет результат
+func (m *Module) executeFor(ctx context.Context, bot *tgbotapi.BotAPI, chatID int64, srv *storage.Server) error {
 	timeout, parseErr := time.ParseDuration(m.cfg.Timeout)
 	if parseErr != nil {
 		timeout = 60 * time.Second
@@ -77,7 +121,17 @@ fi`
 	pkgMgr, lines := parseOutput(out)
 	pkgs := parsePackages(pkgMgr, lines)
 
-	return m.sendResult(bot, msg.Chat.ID, srv, pkgMgr, pkgs)
+	return m.sendResult(bot, chatID, srv, pkgMgr, pkgs)
+}
+
+// hideKeyboard убирает inline-клавиатуру в сообщении (после нажатия на кнопку)
+func hideKeyboard(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) {
+	edit := tgbotapi.NewEditMessageReplyMarkup(
+		query.Message.Chat.ID,
+		query.Message.MessageID,
+		tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}},
+	)
+	_, _ = bot.Send(edit)
 }
 
 // sendResult форматирует и отправляет результат проверки обновлений

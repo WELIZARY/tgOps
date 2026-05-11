@@ -61,19 +61,27 @@ func (m *Module) Handle(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbotapi
 }
 
 func (m *Module) handleStatus(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbotapi.Message) error {
-	srv, err := m.findServer(ctx, msg.CommandArguments())
-	if err != nil {
-		return replyText(bot, msg.Chat.ID, m.notFoundMsg(ctx, msg.CommandArguments()))
+	arg := strings.TrimSpace(msg.CommandArguments())
+	// без аргумента - показываем кнопки выбора сервера
+	if arg == "" {
+		return m.askServer(ctx, bot, msg.Chat.ID, "Выберите сервер для /status:", "status_")
 	}
-
+	srv, err := m.findServer(ctx, arg)
+	if err != nil {
+		return replyText(bot, msg.Chat.ID, m.notFoundMsg(ctx, arg))
+	}
 	metrics := Collect(ctx, m.ssh, internalssh.SpecFromServer(srv))
 	return replyHTML(bot, msg.Chat.ID, formatStatus(srv.Name, metrics, m.cfg.Monitoring.Thresholds))
 }
 
 func (m *Module) handleTop(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbotapi.Message) error {
-	srv, err := m.findServer(ctx, msg.CommandArguments())
+	arg := strings.TrimSpace(msg.CommandArguments())
+	if arg == "" {
+		return m.askServer(ctx, bot, msg.Chat.ID, "Выберите сервер для /top:", "top_")
+	}
+	srv, err := m.findServer(ctx, arg)
 	if err != nil {
-		return replyText(bot, msg.Chat.ID, m.notFoundMsg(ctx, msg.CommandArguments()))
+		return replyText(bot, msg.Chat.ID, m.notFoundMsg(ctx, arg))
 	}
 
 	text, err := CollectTop(ctx, m.ssh, internalssh.SpecFromServer(srv), srv.Name)
@@ -82,6 +90,49 @@ func (m *Module) handleTop(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbot
 		return replyText(bot, msg.Chat.ID, fmt.Sprintf("Ошибка получения процессов с %s.", srv.Name))
 	}
 	return replyHTML(bot, msg.Chat.ID, text)
+}
+
+// askServer отправляет сообщение с inline-кнопками выбора сервера
+func (m *Module) askServer(ctx context.Context, bot *tgbotapi.BotAPI, chatID int64, prompt, prefix string) error {
+	servers, err := m.src.GetServers(ctx)
+	if err != nil || len(servers) == 0 {
+		return replyText(bot, chatID, "Серверы не настроены.")
+	}
+	msg := tgbotapi.NewMessage(chatID, prompt)
+	msg.ReplyMarkup = formatter.ServerKeyboard(servers, prefix)
+	_, err = bot.Send(msg)
+	return err
+}
+
+// HandleStatusCallback обрабатывает нажатие кнопки в /status.
+// callback data: "status_<server-name>"
+func (m *Module) HandleStatusCallback(ctx context.Context, bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) error {
+	name := strings.TrimPrefix(query.Data, "status_")
+	_, _ = bot.Request(tgbotapi.NewCallback(query.ID, ""))
+
+	srv, err := m.findServer(ctx, name)
+	if err != nil {
+		return editText(bot, query, m.notFoundMsg(ctx, name))
+	}
+	metrics := Collect(ctx, m.ssh, internalssh.SpecFromServer(srv))
+	return editHTML(bot, query, formatStatus(srv.Name, metrics, m.cfg.Monitoring.Thresholds))
+}
+
+// HandleTopCallback - аналогично для /top
+func (m *Module) HandleTopCallback(ctx context.Context, bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) error {
+	name := strings.TrimPrefix(query.Data, "top_")
+	_, _ = bot.Request(tgbotapi.NewCallback(query.ID, ""))
+
+	srv, err := m.findServer(ctx, name)
+	if err != nil {
+		return editText(bot, query, m.notFoundMsg(ctx, name))
+	}
+	text, err := CollectTop(ctx, m.ssh, internalssh.SpecFromServer(srv), srv.Name)
+	if err != nil {
+		m.log.Error("ошибка сбора топ процессов", zap.String("server", srv.Name), zap.Error(err))
+		return editText(bot, query, fmt.Sprintf("Ошибка получения процессов с %s.", srv.Name))
+	}
+	return editHTML(bot, query, text)
 }
 
 func (m *Module) handleHealth(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbotapi.Message) error {
@@ -244,5 +295,20 @@ func replyHTML(bot *tgbotapi.BotAPI, chatID int64, text string) error {
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = "HTML"
 	_, err := bot.Send(msg)
+	return err
+}
+
+// editText редактирует исходное сообщение с кнопками, заменяя его обычным текстом
+func editText(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, text string) error {
+	edit := tgbotapi.NewEditMessageText(query.Message.Chat.ID, query.Message.MessageID, text)
+	_, err := bot.Send(edit)
+	return err
+}
+
+// editHTML то же что editText, но с HTML-разметкой
+func editHTML(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, text string) error {
+	edit := tgbotapi.NewEditMessageText(query.Message.Chat.ID, query.Message.MessageID, text)
+	edit.ParseMode = "HTML"
+	_, err := bot.Send(edit)
 	return err
 }
