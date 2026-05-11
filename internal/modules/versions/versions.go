@@ -39,12 +39,46 @@ func (m *Module) Commands() []modules.BotCommand {
 
 func (m *Module) Handle(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbotapi.Message) error {
 	args := strings.Fields(msg.CommandArguments())
+	if len(args) == 0 {
+		return m.askServer(ctx, bot, msg.Chat.ID)
+	}
 
 	srv, err := m.resolveServer(ctx, args)
 	if err != nil {
 		return replyText(bot, msg.Chat.ID, err.Error())
 	}
+	return m.executeFor(ctx, bot, msg.Chat.ID, srv)
+}
 
+// HandleCallback - выбор сервера через inline-кнопки. callback data: "versions_<name>"
+func (m *Module) HandleCallback(ctx context.Context, bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) error {
+	name := strings.TrimPrefix(query.Data, "versions_")
+	_, _ = bot.Request(tgbotapi.NewCallback(query.ID, ""))
+	hideKeyboard(bot, query)
+
+	servers, _ := m.src.GetServers(ctx)
+	for _, s := range servers {
+		if s.Name == name {
+			return m.executeFor(ctx, bot, query.Message.Chat.ID, s)
+		}
+	}
+	return replyText(bot, query.Message.Chat.ID, fmt.Sprintf("Сервер %q не найден", name))
+}
+
+// askServer показывает inline-клавиатуру выбора сервера
+func (m *Module) askServer(ctx context.Context, bot *tgbotapi.BotAPI, chatID int64) error {
+	servers, err := m.src.GetServers(ctx)
+	if err != nil || len(servers) == 0 {
+		return replyText(bot, chatID, "Серверы не настроены.")
+	}
+	msg := tgbotapi.NewMessage(chatID, "Выберите сервер для /versions:")
+	msg.ReplyMarkup = formatter.ServerKeyboard(servers, "versions_")
+	_, err = bot.Send(msg)
+	return err
+}
+
+// executeFor собирает версии на указанном сервере и отправляет результат
+func (m *Module) executeFor(ctx context.Context, bot *tgbotapi.BotAPI, chatID int64, srv *storage.Server) error {
 	timeout, parseErr := time.ParseDuration(m.cfg.Timeout)
 	if parseErr != nil {
 		timeout = 30 * time.Second
@@ -61,7 +95,17 @@ func (m *Module) Handle(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbotapi
 	}
 
 	entries := parseVersions(out)
-	return m.sendResult(bot, msg.Chat.ID, srv, entries)
+	return m.sendResult(bot, chatID, srv, entries)
+}
+
+// hideKeyboard убирает inline-кнопки в исходном сообщении
+func hideKeyboard(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) {
+	edit := tgbotapi.NewEditMessageReplyMarkup(
+		query.Message.Chat.ID,
+		query.Message.MessageID,
+		tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}},
+	)
+	_, _ = bot.Send(edit)
 }
 
 // buildCmd строит SSH-команду для проверки версий

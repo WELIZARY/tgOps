@@ -146,18 +146,63 @@ user_delete() {
 }
 
 
-#! Серверы (таблица servers + config.yaml + ssh ключи)
+#! Серверы (таблица servers + ssh ключи)
+# бот объединяет серверы из config.yaml и из бд на лету.
+# скрипт работает только с бд - перезапуск контейнера не нужен.
+# серверы в config.yaml меняем вручную (это статичные, версионируемые).
 
 
-# показать серверы из бд
+# распарсить секцию ssh.servers из config.yaml через awk
+# выводит таблицу: name host port user key_name
+parse_config_servers() {
+    [[ -f "$CONFIG" ]] || return
+    awk '
+        # начало блока ssh:
+        /^ssh:/                            { in_ssh=1; next }
+        # вышли из ssh: (другой раздел верхнего уровня) - сбрасываем оба флага
+        /^[a-zA-Z]/                        { in_ssh=0; in_srv=0 }
+        # внутри ssh нашли servers:
+        in_ssh && /^  servers:/            { in_srv=1; next }
+        # вышли из servers: (другой ключ того же уровня)
+        in_ssh && /^  [a-zA-Z]/            { in_srv=0 }
+        # начало записи сервера
+        in_srv && /^    - name:/ {
+            if (name != "") print name"\t"host"\t"port"\t"user"\t"key
+            name=""; host=""; port="22"; user=""; key=""
+            sub(/.*name:[[:space:]]*"?/, ""); sub(/"?[[:space:]]*$/, "")
+            name=$0
+        }
+        in_srv && /^      host:/  { v=$0; sub(/.*host:[[:space:]]*"?/, "", v);     sub(/"?[[:space:]]*$/, "", v); host=v }
+        in_srv && /^      port:/  { v=$0; sub(/.*port:[[:space:]]*/, "", v);       sub(/[[:space:]]*$/, "", v); port=v }
+        in_srv && /^      user:/  { v=$0; sub(/.*user:[[:space:]]*"?/, "", v);     sub(/"?[[:space:]]*$/, "", v); user=v }
+        in_srv && /^      key_name:/ { v=$0; sub(/.*key_name:[[:space:]]*"?/, "", v); sub(/"?[[:space:]]*$/, "", v); key=v }
+        END { if (name != "") print name"\t"host"\t"port"\t"user"\t"key }
+    ' "$CONFIG"
+}
+
+# показать серверы из всех источников (как видит бот)
 server_list() {
     check_stack
-    info "серверы в базе данных:"
+
+    info "серверы из config.yaml (статические, правим вручную):"
+    separator
+    local cfg
+    cfg=$(parse_config_servers)
+    if [[ -z "$cfg" ]]; then
+        echo "  (нет)"
+    else
+        printf "%-20s %-18s %-6s %-12s %s\n" "NAME" "HOST" "PORT" "USER" "KEY"
+        echo "$cfg" | awk -F'\t' '{ printf "%-20s %-18s %-6s %-12s %s\n", $1, $2, $3, $4, $5 }'
+    fi
+
+    echo ""
+    info "серверы из бд (динамические, управляем скриптом):"
     separator
     pg_table "SELECT id, name, host, port, ssh_user, key_name, is_active FROM servers ORDER BY id;"
 }
 
-# добавить сервер: запись в бд, генерация ssh ключа, добавление в config.yaml
+# добавить сервер в бд: запись + генерация ssh ключа.
+# config.yaml не трогаем. бот подхватит сервер автоматически без перезапуска.
 server_add() {
     check_stack
     read -rp "имя сервера (латиница, напр. vps-prod): " srv_name
@@ -173,14 +218,19 @@ server_add() {
     read -rp "ssh пользователь [ubuntu]: " srv_user
     srv_user="${srv_user:-ubuntu}"
 
-    # проверяем что имя не занято
+    # проверяем что имя не занято в бд
     existing=$(pg_query "SELECT id FROM servers WHERE name = '$srv_name';" | tr -d '[:space:]')
     if [[ -n "$existing" ]]; then
         die "сервер с именем '$srv_name' уже есть в бд (id=$existing)"
     fi
 
+    # проверяем что имя не пересекается с конфигом (бот не любит дубли)
+    if parse_config_servers | awk -F'\t' -v n="$srv_name" '$1==n { found=1 } END { exit !found }'; then
+        die "сервер '$srv_name' уже есть в config.yaml, выбери другое имя или убери оттуда"
+    fi
+
     # генерируем ssh ключ если его еще нет
-    key_file="$KEYS_DIR/$srv_name"
+    local key_file="$KEYS_DIR/$srv_name"
     if [[ -f "$key_file" ]]; then
         warn "ключ $key_file уже существует, используем его"
     else
@@ -191,56 +241,46 @@ server_add() {
         ok "ключ создан"
     fi
 
-    # показываем публичный ключ чтобы можно было скопировать на сервер
+    # пишем в бд
+    pg_query "INSERT INTO servers (name, host, port, ssh_user, key_name) VALUES ('$srv_name', '$srv_host', $srv_port, '$srv_user', '$srv_name');" >/dev/null
+    ok "сервер добавлен в бд (бот подхватит автоматически, перезапуск не нужен)"
+
+    # показываем публичный ключ
     separator
-    info "публичный ключ (добавь на сервер в ~/.ssh/authorized_keys):"
+    info "публичный ключ - добавь его на сервер в ~/.ssh/authorized_keys:"
     echo ""
     cat "${key_file}.pub"
     echo ""
     separator
 
-    # записываем в бд
-    pg_query "INSERT INTO servers (name, host, port, ssh_user, key_name) VALUES ('$srv_name', '$srv_host', $srv_port, '$srv_user', '$srv_name');" >/dev/null
-    ok "сервер добавлен в бд"
-
-    # добавляем в config.yaml если такого сервера там еще нет
-    if grep -q "name: \"$srv_name\"" "$CONFIG" 2>/dev/null; then
-        warn "сервер '$srv_name' уже есть в config.yaml, пропускаю"
-    else
-        info "добавляю сервер в config.yaml"
-        cat >> "$CONFIG" <<YAML_BLOCK
-
-    # сервер $srv_name, добавлен $(date +%Y-%m-%d)
-    - name: "$srv_name"
-      host: "$srv_host"
-      port: $srv_port
-      user: "$srv_user"
-      key_name: "$srv_name"
-YAML_BLOCK
-        warn "запись добавлена в конец файла, проверь что она в секции ssh.servers"
-        ok "config.yaml обновлен"
-    fi
-
-    echo ""
-    warn "не забудь:"
-    echo "  1) добавить публичный ключ на сервер $srv_host"
-    echo "  2) перезапустить бота: make docker-restart"
+    warn "не забудь добавить публичный ключ на сервер $srv_host"
 }
 
-# удалить сервер из бд (ключи и конфиг не трогаем)
+# удалить сервер из бд. ключ оставляем (мало ли еще пригодится).
+# серверы из config.yaml удаляем вручную из файла.
 server_delete() {
     check_stack
     server_list
     separator
-    read -rp "имя сервера для удаления: " srv_name
+    read -rp "имя сервера для удаления из бд: " srv_name
+    [[ -n "$srv_name" ]] || die "имя не может быть пустым"
 
-    confirm "удалить сервер '$srv_name' из бд? (ключи и config.yaml не трогаем)"
+    # проверяем что сервер в бд (а не в конфиге)
+    existing=$(pg_query "SELECT id FROM servers WHERE name = '$srv_name';" | tr -d '[:space:]')
+    if [[ -z "$existing" ]]; then
+        die "сервер '$srv_name' не найден в бд. если он в config.yaml - удали вручную"
+    fi
+
+    confirm "удалить сервер '$srv_name' из бд?"
     pg_query "DELETE FROM servers WHERE name = '$srv_name';" >/dev/null
-    ok "сервер удален из бд"
-    warn "ключ keys/$srv_name и запись в config.yaml удали вручную если нужно"
+    ok "сервер удален из бд (бот сразу перестанет его видеть)"
+
+    if [[ -f "$KEYS_DIR/$srv_name" ]]; then
+        warn "ключ keys/$srv_name остался. удали его вручную если он больше не нужен"
+    fi
 }
 
-# активация/деактивация сервера
+# активация/деактивация сервера в бд
 server_toggle() {
     check_stack
     server_list
@@ -248,7 +288,7 @@ server_toggle() {
     read -rp "имя сервера: " srv_name
 
     result=$(pg_query "UPDATE servers SET is_active = NOT is_active WHERE name = '$srv_name' RETURNING is_active;" | tr -d '[:space:]')
-    [[ -n "$result" ]] || die "сервер '$srv_name' не найден"
+    [[ -n "$result" ]] || die "сервер '$srv_name' не найден в бд (серверы из config.yaml через скрипт не управляются)"
 
     if [[ "$result" == "t" ]]; then
         ok "сервер '$srv_name' активирован"
