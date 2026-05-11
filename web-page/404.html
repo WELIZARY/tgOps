@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>404 – tgOps</title>
+<meta name="robots" content="noindex" />
+<link rel="icon" type="image/png" href="assets/tgops-logo.png" />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="styles.css" />
+<style>
+  .err {
+    min-height: calc(100vh - 80px);
+    display: grid; place-items: center;
+    text-align: center;
+    padding: 40px 20px;
+  }
+  .err__code {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: clamp(120px, 22vw, 240px);
+    font-weight: 700;
+    line-height: 1;
+    background: linear-gradient(135deg, #2bdcc7, #5be8d8 40%, #ffffff);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    letter-spacing: -.04em;
+    margin: 0;
+  }
+  .err__hint {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--fg-mute);
+    font-size: 14px;
+    margin: 16px 0 8px;
+  }
+  .err__hint::before { content: "$ "; color: var(--teal); }
+  .err__msg { color: var(--fg); font-size: 22px; max-width: 520px; margin: 0 auto 32px; font-family: 'Space Grotesk', sans-serif; }
+  .err__cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .err__term {
+    margin-top: 40px;
+    text-align: left;
+    max-width: 520px;
+    background: rgba(7,10,14,.85);
+    border: 1px solid var(--line-2);
+    border-radius: 12px;
+    padding: 16px 18px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: var(--fg-dim);
+  }
+  .err__term .ok { color: #34d39a; }
+  .err__term .fail { color: #ff6b6b; }
+</style>
+</head>
+<body>
+  <div class="bg">
+    <div class="bg-grid"></div>
+    <div class="bg-blob bg-blob--teal"></div>
+    <div class="bg-blob bg-blob--green"></div>
+    <div class="bg-noise"></div>
+  </div>
+
+  <header class="nav">
+    <a class="nav__brand" href="/">
+      <img src="assets/tgops-logo.png" alt="tgOps" width="28" height="28" />
+      <span>tgOps</span>
+    </a>
+  </header>
+
+  <main class="err">
+    <div>
+      <div class="err__hint">tgops status /requested-page</div>
+      <h1 class="err__code">404</h1>
+      <div class="err__msg">Контейнер с этой страницей не запущен. Возможно, его ещё не задеплоили.</div>
+      <div class="err__cta">
+        <a class="btn btn--primary" href="/">← на главную</a>
+        <a class="btn btn--ghost" href="https://github.com/WELIZARY/tgOps" target="_blank" rel="noopener">Открыть репозиторий</a>
+      </div>
+
+      <pre class="err__term">$ tgops health-check
+<span class="ok">●</span> bot           running
+<span class="ok">●</span> postgres      running
+<span class="ok">●</span> redis         running
+<span class="fail">✕</span> /<span style="color:#fff">requested-page</span>   not found
+
+exit code 404</pre>
+    </div>
+  </main>
+</body>
+</html>
