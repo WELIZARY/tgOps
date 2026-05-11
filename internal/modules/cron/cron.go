@@ -47,56 +47,164 @@ func (m *Module) Commands() []modules.BotCommand {
 func (m *Module) Handle(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbotapi.Message) error {
 	args := strings.Fields(msg.CommandArguments())
 	if len(args) == 0 {
-		return replyText(bot, msg.Chat.ID,
-			"Использование:\n"+
-				"  /cron list [сервер]   — cron-задачи\n"+
-				"  /cron timers [сервер] — systemd-таймеры",
-		)
+		// без аргументов - кнопки выбора подкоманды
+		return m.askSubcommand(bot, msg.Chat.ID)
 	}
 
-	sub := args[0]
-	rest := args[1:]
+	// гибкий парсер: подкоманда и сервер могут идти в любом порядке
+	sub, serverName := parseArgs(args)
+
+	// если подкоманда есть, но сервер не задан - покажем кнопки серверов
+	if (sub == "list" || sub == "timers") && serverName == "" {
+		return m.askServer(ctx, bot, msg.Chat.ID, sub)
+	}
+
+	rest := []string{}
+	if serverName != "" {
+		rest = []string{serverName}
+	}
 
 	switch sub {
 	case "list":
-		return m.handleList(ctx, bot, msg, rest)
+		return m.handleList(ctx, bot, msg.Chat.ID, rest)
 	case "timers":
-		return m.handleTimers(ctx, bot, msg, rest)
+		return m.handleTimers(ctx, bot, msg.Chat.ID, rest)
 	default:
 		return replyText(bot, msg.Chat.ID,
 			fmt.Sprintf("Неизвестная подкоманда %q. Доступны: list, timers", sub))
 	}
 }
 
+// HandleCallback обрабатывает inline-кнопки cron.
+// callback data:
+//
+//	"cron_sub_list" / "cron_sub_timers" - выбор подкоманды (потом показывает серверы)
+//	"cron_list_<server>" / "cron_timers_<server>" - финальное выполнение
+func (m *Module) HandleCallback(ctx context.Context, bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) error {
+	_, _ = bot.Request(tgbotapi.NewCallback(query.ID, ""))
+	data := query.Data
+
+	// первый уровень: выбор подкоманды
+	if strings.HasPrefix(data, "cron_sub_") {
+		sub := strings.TrimPrefix(data, "cron_sub_")
+		hideKeyboard(bot, query)
+		return m.askServer(ctx, bot, query.Message.Chat.ID, sub)
+	}
+
+	// второй уровень: финальное выполнение
+	for _, sub := range []string{"list", "timers"} {
+		prefix := "cron_" + sub + "_"
+		if strings.HasPrefix(data, prefix) {
+			name := strings.TrimPrefix(data, prefix)
+			hideKeyboard(bot, query)
+			rest := []string{name}
+			if sub == "list" {
+				return m.handleList(ctx, bot, query.Message.Chat.ID, rest)
+			}
+			return m.handleTimers(ctx, bot, query.Message.Chat.ID, rest)
+		}
+	}
+	return nil
+}
+
+// askSubcommand показывает кнопки выбора list/timers
+func (m *Module) askSubcommand(bot *tgbotapi.BotAPI, chatID int64) error {
+	buttons := []formatter.ButtonRow{
+		{Label: "cron-задачи", Data: "cron_sub_list"},
+		{Label: "systemd-таймеры", Data: "cron_sub_timers"},
+	}
+	msg := tgbotapi.NewMessage(chatID, "Что показать?")
+	msg.ReplyMarkup = formatter.SubcommandKeyboard(buttons)
+	_, err := bot.Send(msg)
+	return err
+}
+
+// askServer показывает кнопки выбора сервера для конкретной подкоманды
+func (m *Module) askServer(ctx context.Context, bot *tgbotapi.BotAPI, chatID int64, sub string) error {
+	servers, err := m.src.GetServers(ctx)
+	if err != nil || len(servers) == 0 {
+		return replyText(bot, chatID, "Серверы не настроены.")
+	}
+	prompt := "Выберите сервер для /cron " + sub + ":"
+	msg := tgbotapi.NewMessage(chatID, prompt)
+	msg.ReplyMarkup = formatter.ServerKeyboard(servers, "cron_"+sub+"_")
+	_, err = bot.Send(msg)
+	return err
+}
+
+// hideKeyboard убирает inline-кнопки в исходном сообщении
+func hideKeyboard(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) {
+	edit := tgbotapi.NewEditMessageReplyMarkup(
+		query.Message.Chat.ID,
+		query.Message.MessageID,
+		tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}},
+	)
+	_, _ = bot.Send(edit)
+}
+
+// parseArgs ищет подкоманду (list/timers) и имя сервера независимо от порядка
+func parseArgs(args []string) (sub, serverName string) {
+	for _, a := range args {
+		switch a {
+		case "list", "timers":
+			sub = a
+		default:
+			serverName = a
+		}
+	}
+	// если подкоманда не найдена — берём первое слово как подкоманду (для понятной ошибки)
+	if sub == "" && len(args) > 0 {
+		sub = args[0]
+	}
+	return
+}
+
 // handleList собирает crontab всех пользователей и системные задачи
-func (m *Module) handleList(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbotapi.Message, args []string) error {
+func (m *Module) handleList(ctx context.Context, bot *tgbotapi.BotAPI, chatID int64, args []string) error {
 	srv, err := m.resolveServer(ctx, args)
 	if err != nil {
-		return replyText(bot, msg.Chat.ID, err.Error())
+		return replyText(bot, chatID, err.Error())
 	}
 
 	cmdCtx, cancel := context.WithTimeout(ctx, m.timeout())
 	defer cancel()
 
-	// собираем crontab всех пользователей + системные задачи в /etc/cron.d/
+	// собираем системные cron-задачи и crontab текущего ssh-пользователя.
+	// требование root намеренно убрано: crontab -u нужен root, поэтому читаем только свой.
+	// перенаправление 2>/dev/null после glob - синтаксическая ошибка bash, поэтому
+	// глобам разрешаем расширяться как есть, а несуществующие файлы фильтруем через [ -f ]
 	sshCmd := `
 FOUND=0
-for user in $(cut -f1 -d: /etc/passwd 2>/dev/null); do
-    entries=$(crontab -u "$user" -l 2>/dev/null | grep -v "^#" | grep -v "^[[:space:]]*$")
-    if [ -n "$entries" ]; then
-        echo "$entries" | while IFS= read -r line; do
-            echo "$user $line"
-        done
+# системные задачи из /etc/cron.* директорий
+for d in /etc/cron.d /etc/cron.daily /etc/cron.weekly /etc/cron.monthly /etc/cron.hourly; do
+    [ -d "$d" ] || continue
+    for f in "$d"/*; do
+        [ -f "$f" ] || continue
+        content=$(grep -vE '^(#|[[:space:]]*$)' "$f" 2>/dev/null)
+        if [ -n "$content" ]; then
+            base=$(basename "$f")
+            echo "$content" | sed "s|^|system:$base |"
+            FOUND=1
+        fi
+    done
+done
+# главный системный /etc/crontab (без переменных окружения)
+if [ -f /etc/crontab ]; then
+    content=$(grep -vE '^(#|[[:space:]]*$|^[A-Z_]+=)' /etc/crontab 2>/dev/null)
+    if [ -n "$content" ]; then
+        echo "$content" | sed 's|^|system:crontab |'
         FOUND=1
     fi
-done
-for f in /etc/cron.d/* /etc/cron.daily/* /etc/cron.weekly/* /etc/cron.monthly/* 2>/dev/null; do
-    [ -f "$f" ] || continue
-    grep -v "^#" "$f" 2>/dev/null | grep -v "^[[:space:]]*$" | \
-        sed "s|^|system:$(basename $f) |"
+fi
+# crontab текущего ssh-пользователя (root не требуется)
+user_cron=$(crontab -l 2>/dev/null | grep -vE '^(#|[[:space:]]*$)')
+if [ -n "$user_cron" ]; then
+    me=$(whoami)
+    echo "$user_cron" | sed "s|^|$me |"
     FOUND=1
-done
-[ "$FOUND" = "0" ] && echo "NO_CRON_JOBS"`
+fi
+[ "$FOUND" = "0" ] && echo "NO_CRON_JOBS"
+`
 
 	out, runErr := m.sshClient.Run(cmdCtx, internalssh.SpecFromServer(srv), sshCmd)
 	if runErr != nil {
@@ -118,7 +226,7 @@ done
 	if out == "" || out == "NO_CRON_JOBS" {
 		text := fmt.Sprintf("%s @ %s\n\nАктивных cron-задач не найдено.",
 			formatter.Bold("Cron"), formatter.EscapeHTML(srv.Name))
-		reply := tgbotapi.NewMessage(msg.Chat.ID, text)
+		reply := tgbotapi.NewMessage(chatID, text)
 		reply.ParseMode = "HTML"
 		_, err = bot.Send(reply)
 		return err
@@ -128,14 +236,14 @@ done
 	header := fmt.Sprintf("%s @ %s\n\n",
 		formatter.Bold("Cron tasks"), formatter.EscapeHTML(srv.Name))
 
-	return m.sendOutput(bot, msg.Chat.ID, header, formatted)
+	return m.sendOutput(bot, chatID, header, formatted)
 }
 
 // handleTimers выводит активные systemd-таймеры
-func (m *Module) handleTimers(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbotapi.Message, args []string) error {
+func (m *Module) handleTimers(ctx context.Context, bot *tgbotapi.BotAPI, chatID int64, args []string) error {
 	srv, err := m.resolveServer(ctx, args)
 	if err != nil {
-		return replyText(bot, msg.Chat.ID, err.Error())
+		return replyText(bot, chatID, err.Error())
 	}
 
 	cmdCtx, cancel := context.WithTimeout(ctx, m.timeout())
@@ -163,7 +271,7 @@ func (m *Module) handleTimers(ctx context.Context, bot *tgbotapi.BotAPI, msg *tg
 	if out == "" || out == "SYSTEMD_UNAVAILABLE" {
 		text := fmt.Sprintf("%s @ %s\n\nsystemd недоступен или таймеры не настроены.",
 			formatter.Bold("Systemd timers"), formatter.EscapeHTML(srv.Name))
-		reply := tgbotapi.NewMessage(msg.Chat.ID, text)
+		reply := tgbotapi.NewMessage(chatID, text)
 		reply.ParseMode = "HTML"
 		_, err = bot.Send(reply)
 		return err
@@ -172,7 +280,7 @@ func (m *Module) handleTimers(ctx context.Context, bot *tgbotapi.BotAPI, msg *tg
 	header := fmt.Sprintf("%s @ %s\n\n",
 		formatter.Bold("Systemd timers"), formatter.EscapeHTML(srv.Name))
 
-	return m.sendOutput(bot, msg.Chat.ID, header, out)
+	return m.sendOutput(bot, chatID, header, out)
 }
 
 // formatCrontab форматирует вывод crontab в читаемую таблицу

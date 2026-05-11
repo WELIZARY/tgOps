@@ -117,7 +117,7 @@ func main() {
 	systemMod := system.New(sshClient, serverSrc, cfg, log)
 	alertsMod := alerts.New(alertRepo, log)
 	sslMod := ssl.New(&cfg.SSL, sslRepo, alertMgr, log)
-	networkMod := network.New(log)
+	networkMod := network.New(sshClient, serverSrc, log)
 	logsMod := logs.New(sshClient, serverSrc, &cfg.Logs, log)
 	dockerMod := docker.New(sshClient, serverSrc, &cfg.Docker, log)
 	cicdMod := cicd.New(pipelineRepo, cicdNotifier, log)
@@ -148,6 +148,13 @@ func main() {
 	router.RegisterCallback("ack_", alertsMod.HandleAck)
 	router.RegisterCallback("deploy_approve_", cicdMod.HandleApprove)
 	router.RegisterCallback("deploy_reject_", cicdMod.HandleReject)
+	router.RegisterCallback("status_", systemMod.HandleStatusCallback)
+	router.RegisterCallback("top_", systemMod.HandleTopCallback)
+	router.RegisterCallback("updates_", updatesMod.HandleCallback)
+	router.RegisterCallback("backups_", backupsMod.HandleCallback)
+	router.RegisterCallback("versions_", versionsMod.HandleCallback)
+	router.RegisterCallback("cron_", cronMod.HandleCallback)
+	router.RegisterCallback("scan_", scanMod.HandleCallback)
 
 	// Фоновые горутины мониторинга
 	collector := alerts.NewCollector(sshClient, serverSrc, cfg, alertRepo, alertMgr, log)

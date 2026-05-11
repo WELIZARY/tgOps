@@ -45,11 +45,46 @@ func (m *Module) Handle(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbotapi
 	}
 
 	args := strings.Fields(msg.CommandArguments())
+	if len(args) == 0 {
+		return m.askServer(ctx, bot, msg.Chat.ID)
+	}
+
 	srv, err := m.resolveServer(ctx, args)
 	if err != nil {
 		return replyText(bot, msg.Chat.ID, err.Error())
 	}
+	return m.executeFor(ctx, bot, msg.Chat.ID, srv)
+}
 
+// HandleCallback - выбор сервера через inline-кнопки. callback data: "backups_<name>"
+func (m *Module) HandleCallback(ctx context.Context, bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) error {
+	name := strings.TrimPrefix(query.Data, "backups_")
+	_, _ = bot.Request(tgbotapi.NewCallback(query.ID, ""))
+	hideKeyboard(bot, query)
+
+	servers, _ := m.src.GetServers(ctx)
+	for _, s := range servers {
+		if s.Name == name {
+			return m.executeFor(ctx, bot, query.Message.Chat.ID, s)
+		}
+	}
+	return replyText(bot, query.Message.Chat.ID, fmt.Sprintf("Сервер %q не найден", name))
+}
+
+// askServer показывает inline-клавиатуру выбора сервера
+func (m *Module) askServer(ctx context.Context, bot *tgbotapi.BotAPI, chatID int64) error {
+	servers, err := m.src.GetServers(ctx)
+	if err != nil || len(servers) == 0 {
+		return replyText(bot, chatID, "Серверы не настроены.")
+	}
+	msg := tgbotapi.NewMessage(chatID, "Выберите сервер для /backups:")
+	msg.ReplyMarkup = formatter.ServerKeyboard(servers, "backups_")
+	_, err = bot.Send(msg)
+	return err
+}
+
+// executeFor проверяет бэкапы на указанном сервере и отправляет результат
+func (m *Module) executeFor(ctx context.Context, bot *tgbotapi.BotAPI, chatID int64, srv *storage.Server) error {
 	timeout, parseErr := time.ParseDuration(m.cfg.Timeout)
 	if parseErr != nil {
 		timeout = 30 * time.Second
@@ -58,7 +93,6 @@ func (m *Module) Handle(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbotapi
 	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// проверяем все директории одной SSH-командой
 	sshCmd := m.buildCheckCmd()
 	out, runErr := m.sshClient.Run(cmdCtx, internalssh.SpecFromServer(srv), sshCmd)
 	if runErr != nil {
@@ -66,7 +100,17 @@ func (m *Module) Handle(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbotapi
 	}
 
 	statuses := m.parseResults(out)
-	return m.sendResult(bot, msg.Chat.ID, srv, statuses)
+	return m.sendResult(bot, chatID, srv, statuses)
+}
+
+// hideKeyboard убирает inline-кнопки в исходном сообщении
+func hideKeyboard(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery) {
+	edit := tgbotapi.NewEditMessageReplyMarkup(
+		query.Message.Chat.ID,
+		query.Message.MessageID,
+		tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}},
+	)
+	_, _ = bot.Send(edit)
 }
 
 // buildCheckCmd формирует bash-команду для проверки всех директорий
