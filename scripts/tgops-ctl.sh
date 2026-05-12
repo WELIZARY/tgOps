@@ -544,23 +544,49 @@ config_env_edit() {
     warn "перезапусти бота чтобы применить: make docker-restart"
 }
 
-# изменить порог мониторинга
+# вспомогательная функция: убрать кавычки и пробелы по краям
+trim_input() {
+    local s="$1"
+    s="${s//\"/}"
+    s="${s//\'/}"
+    # обрезаем пробелы и табы
+    s="$(echo "$s" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    echo "$s"
+}
+
+# изменить пороги мониторинга по одному.
+# спрашиваем все 6 параметров по очереди, Enter - пропустить и оставить как есть.
 config_threshold() {
     info "текущие пороги мониторинга:"
     separator
     grep -A8 "thresholds:" "$CONFIG" | head -9
     separator
+    echo "вводи новое значение или Enter чтобы пропустить параметр"
+    echo ""
 
-    echo "параметры: cpu_warning, cpu_critical, ram_warning, ram_critical, disk_warning, disk_critical"
-    read -rp "параметр: " param
-    [[ "$param" =~ ^(cpu|ram|disk)_(warning|critical)$ ]] || die "неизвестный параметр"
+    local changed=0
+    local params=("cpu_warning" "cpu_critical" "ram_warning" "ram_critical" "disk_warning" "disk_critical")
+    for p in "${params[@]}"; do
+        # текущее значение из конфига
+        local cur
+        cur=$(grep -E "^[[:space:]]+${p}:" "$CONFIG" | head -1 | awk '{print $2}')
+        read -rp "$p (сейчас $cur): " val
+        val=$(trim_input "$val")
+        [[ -z "$val" ]] && continue
+        if ! [[ "$val" =~ ^[0-9]+$ ]] || (( val < 0 || val > 100 )); then
+            warn "$p: значение должно быть числом 0-100, пропускаю"
+            continue
+        fi
+        sed -i "s/\(${p}:[[:space:]]*\)[0-9]*/\1$val/" "$CONFIG"
+        ok "$p = $val"
+        changed=1
+    done
 
-    read -rp "новое значение (0-100): " val
-    [[ "$val" =~ ^[0-9]+$ ]] && (( val >= 0 && val <= 100 )) || die "значение должно быть числом от 0 до 100"
-
-    sed -i "s/\($param:\s*\)[0-9]*/\1$val/" "$CONFIG"
-    ok "$param установлен в $val"
-    warn "перезапусти бота: make docker-restart"
+    if [[ $changed -eq 1 ]]; then
+        warn "перезапусти бота чтобы применить: make docker-restart"
+    else
+        info "ничего не изменено"
+    fi
 }
 
 # изменить интервал мониторинга
@@ -570,18 +596,57 @@ config_interval() {
     separator
 
     read -rp "новый интервал (напр. 30s, 60s, 5m): " interval
-    [[ "$interval" =~ ^[0-9]+(s|m|h)$ ]] || die "формат: число + s/m/h (напр. 60s)"
+    interval=$(trim_input "$interval")
+    [[ "$interval" =~ ^[0-9]+(s|m|h)$ ]] || die "формат: число + s/m/h (напр. 60s), получено: '$interval'"
 
-    sed -i "/^monitoring:/,/^[a-z]/{s/\(interval:\s*\"\)[^\"]*\"/\1$interval\"/}" "$CONFIG"
+    # меняем interval в первой попавшейся секции (она в monitoring).
+    # awk надёжнее чем sed с диапазоном для yaml.
+    awk -v new="$interval" '
+        BEGIN { done = 0 }
+        !done && /^monitoring:/ { in_mon = 1 }
+        in_mon && !done && /^[[:space:]]+interval:/ {
+            sub(/"[^"]*"/, "\"" new "\"")
+            done = 1
+        }
+        { print }
+    ' "$CONFIG" > "$CONFIG.tmp" && mv "$CONFIG.tmp" "$CONFIG"
     ok "интервал мониторинга: $interval"
     warn "перезапусти бота: make docker-restart"
+}
+
+# добавить элемент в список (массив строк) внутри указанной секции yaml.
+# section: имя верхнеуровневой секции (ssh, ssl, logs, ...)
+# key:     имя ключа со списком (domains, allowed_services, ...)
+# item:    значение для добавления (будет в кавычках)
+yaml_add_to_list() {
+    local section="$1" key="$2" item="$3"
+    awk -v sec="$section" -v key="$key" -v item="$item" '
+        $0 ~ "^"sec":"          { in_sec = 1 }
+        in_sec && /^[a-zA-Z]/ && $0 !~ "^"sec":" { in_sec = 0; in_key = 0 }
+        in_sec && $0 ~ "^[[:space:]]+"key":" { in_key = 1; print; next }
+        in_key && /^[[:space:]]+[a-zA-Z]/ {
+            # вышли из списка - вставляем перед текущей строкой
+            print "    - \"" item "\""
+            in_key = 0
+        }
+        { print }
+        END {
+            if (in_key) print "    - \"" item "\""
+        }
+    ' "$CONFIG" > "$CONFIG.tmp" && mv "$CONFIG.tmp" "$CONFIG"
 }
 
 # управление ssl доменами в конфиге
 config_ssl_domains() {
     info "ssl домены в конфиге:"
     separator
-    grep -A20 "^ssl:" "$CONFIG" | grep -E "^\s+- " | head -20
+    awk '
+        /^ssl:/ { in_sec = 1; next }
+        /^[a-zA-Z]/ { in_sec = 0 }
+        in_sec && /^[[:space:]]+domains:/ { in_list = 1; next }
+        in_sec && /^[[:space:]]+[a-zA-Z]/ { in_list = 0 }
+        in_list && /^[[:space:]]+- / { print }
+    ' "$CONFIG"
     separator
 
     echo "1) добавить домен"
@@ -591,8 +656,9 @@ config_ssl_domains() {
     case "$choice" in
         1)
             read -rp "домен (напр. example.com): " domain
+            domain=$(trim_input "$domain")
             [[ -n "$domain" ]] || die "домен не может быть пустым"
-            sed -i "/^ssl:/,/^[a-z]/{/domains:/a\\    - \"$domain\"}" "$CONFIG"
+            yaml_add_to_list "ssl" "domains" "$domain"
             ok "домен $domain добавлен в ssl.domains"
             warn "перезапусти бота: make docker-restart"
             ;;
@@ -604,7 +670,13 @@ config_ssl_domains() {
 config_log_services() {
     info "разрешенные сервисы для логов:"
     separator
-    grep -A20 "^logs:" "$CONFIG" | grep -E "^\s+- " | head -20
+    awk '
+        /^logs:/ { in_sec = 1; next }
+        /^[a-zA-Z]/ { in_sec = 0 }
+        in_sec && /^[[:space:]]+allowed_services:/ { in_list = 1; next }
+        in_sec && /^[[:space:]]+[a-zA-Z]/ { in_list = 0 }
+        in_list && /^[[:space:]]+- / { print }
+    ' "$CONFIG"
     separator
 
     echo "1) добавить сервис"
@@ -614,8 +686,9 @@ config_log_services() {
     case "$choice" in
         1)
             read -rp "имя сервиса (напр. nginx, postgresql): " svc
+            svc=$(trim_input "$svc")
             [[ -n "$svc" ]] || die "имя не может быть пустым"
-            sed -i "/allowed_services:/a\\    - \"$svc\"" "$CONFIG"
+            yaml_add_to_list "logs" "allowed_services" "$svc"
             ok "сервис '$svc' добавлен в allowed_services"
             warn "перезапусти бота: make docker-restart"
             ;;
@@ -627,7 +700,8 @@ config_log_services() {
 config_health() {
     info "health check эндпоинты:"
     separator
-    grep -A50 "^health_checks:" "$CONFIG" | grep -B1 -A3 "name:" | head -30
+    # отдельные опции через -e чтобы grep не воспринимал "- name:" как флаги
+    grep -A50 "^health_checks:" "$CONFIG" | grep -e "name:" -e "url:" | head -30
     separator
 }
 
@@ -635,7 +709,7 @@ config_health() {
 config_ansible() {
     info "ansible плейбуки в конфиге:"
     separator
-    grep -A50 "^ansible:" "$CONFIG" | grep -B0 -A3 "- name:" | head -30
+    grep -A50 "^ansible:" "$CONFIG" | grep -e "- name:" -e "file:" -e "description:" | head -30
     separator
 
     echo "1) добавить плейбук в whitelist"
@@ -647,14 +721,37 @@ config_ansible() {
             read -rp "короткое имя (напр. deploy-app): " pb_name
             read -rp "имя файла (напр. deploy-app.yml): " pb_file
             read -rp "описание: " pb_desc
+            pb_name=$(trim_input "$pb_name")
+            pb_file=$(trim_input "$pb_file")
+            pb_desc=$(trim_input "$pb_desc")
 
-            cat >> "$CONFIG" <<YAML_BLOCK
-    - name: "$pb_name"
-      file: "$pb_file"
-      description: "$pb_desc"
-YAML_BLOCK
-            warn "запись добавлена в конец файла, проверь что она в секции ansible.playbooks"
-            ok "плейбук добавлен"
+            # добавляем блок прямо в конец ansible.playbooks
+            awk -v n="$pb_name" -v f="$pb_file" -v d="$pb_desc" '
+                /^ansible:/ { in_sec = 1; print; next }
+                /^[a-zA-Z]/ && in_sec && $0 !~ "^ansible:" {
+                    # вышли из ansible - вставляем перед следующей секцией
+                    print "    - name: \"" n "\""
+                    print "      file: \"" f "\""
+                    print "      description: \"" d "\""
+                    in_sec = 0
+                }
+                in_sec && /^[[:space:]]+playbooks:/ { in_list = 1; print; next }
+                in_list && /^[a-z]/ {
+                    print "    - name: \"" n "\""
+                    print "      file: \"" f "\""
+                    print "      description: \"" d "\""
+                    in_list = 0
+                }
+                { print }
+                END {
+                    if (in_list || in_sec) {
+                        print "    - name: \"" n "\""
+                        print "      file: \"" f "\""
+                        print "      description: \"" d "\""
+                    }
+                }
+            ' "$CONFIG" > "$CONFIG.tmp" && mv "$CONFIG.tmp" "$CONFIG"
+            ok "плейбук $pb_name добавлен"
             warn "перезапусти бота: make docker-restart"
             ;;
         *) return ;;
@@ -665,7 +762,7 @@ YAML_BLOCK
 config_backups() {
     info "пути бэкапов в конфиге:"
     separator
-    grep -A30 "^backups:" "$CONFIG" | grep -B0 -A3 "- name:" | head -30
+    grep -A30 "^backups:" "$CONFIG" | grep -e "- name:" -e "path:" -e "max_age" | head -30
     separator
 }
 
@@ -818,6 +915,11 @@ show_help() {
 #! Интерактивное меню
 
 
+# запуск действия в подоболочке. die / exit из действия не убьют меню.
+run() {
+    ( "$@" ) || true
+}
+
 interactive_menu() {
     while true; do
         echo ""
@@ -845,11 +947,11 @@ interactive_menu() {
                 echo "  1) список    2) добавить    3) роль    4) вкл/выкл    5) удалить"
                 read -rp "  выбор: " act
                 case "$act" in
-                    1) user_list ;;
-                    2) user_add ;;
-                    3) user_role ;;
-                    4) user_toggle ;;
-                    5) user_delete ;;
+                    1) run user_list ;;
+                    2) run user_add ;;
+                    3) run user_role ;;
+                    4) run user_toggle ;;
+                    5) run user_delete ;;
                     *) warn "неизвестный выбор" ;;
                 esac
                 ;;
@@ -858,10 +960,10 @@ interactive_menu() {
                 echo "  1) список    2) добавить    3) удалить    4) вкл/выкл"
                 read -rp "  выбор: " act
                 case "$act" in
-                    1) server_list ;;
-                    2) server_add ;;
-                    3) server_delete ;;
-                    4) server_toggle ;;
+                    1) run server_list ;;
+                    2) run server_add ;;
+                    3) run server_delete ;;
+                    4) run server_toggle ;;
                     *) warn "неизвестный выбор" ;;
                 esac
                 ;;
@@ -870,9 +972,9 @@ interactive_menu() {
                 echo "  1) список    2) сгенерировать    3) показать pub"
                 read -rp "  выбор: " act
                 case "$act" in
-                    1) keys_list ;;
-                    2) keys_generate ;;
-                    3) keys_show_pub ;;
+                    1) run keys_list ;;
+                    2) run keys_generate ;;
+                    3) run keys_show_pub ;;
                     *) warn "неизвестный выбор" ;;
                 esac
                 ;;
@@ -881,11 +983,11 @@ interactive_menu() {
                 echo "  1) все    2) неподтв.    3) подтвердить    4) очистить    5) статистика"
                 read -rp "  выбор: " act
                 case "$act" in
-                    1) alert_list ;;
-                    2) alert_unacked ;;
-                    3) alert_ack ;;
-                    4) alert_cleanup ;;
-                    5) alert_stats ;;
+                    1) run alert_list ;;
+                    2) run alert_unacked ;;
+                    3) run alert_ack ;;
+                    4) run alert_cleanup ;;
+                    5) run alert_stats ;;
                     *) warn "неизвестный выбор" ;;
                 esac
                 ;;
@@ -894,15 +996,15 @@ interactive_menu() {
                 echo "  1) список    2) поиск"
                 read -rp "  выбор: " act
                 case "$act" in
-                    1) audit_list ;;
-                    2) audit_search ;;
+                    1) run audit_list ;;
+                    2) run audit_search ;;
                     *) warn "неизвестный выбор" ;;
                 esac
                 ;;
-            6) ssl_list ;;
-            7) pipeline_list ;;
-            8) ansible_list ;;
-            9) cron_list ;;
+            6) run ssl_list ;;
+            7) run pipeline_list ;;
+            8) run ansible_list ;;
+            9) run cron_list ;;
             10)
                 echo ""
                 echo "  1) показать config    2) редактировать config    3) .env"
@@ -911,17 +1013,17 @@ interactive_menu() {
                 echo "  10) ansible плейбуки   11) пути бэкапов"
                 read -rp "  выбор: " act
                 case "$act" in
-                    1)  config_show ;;
-                    2)  config_edit ;;
-                    3)  config_env ;;
-                    4)  config_env_edit ;;
-                    5)  config_threshold ;;
-                    6)  config_interval ;;
-                    7)  config_ssl_domains ;;
-                    8)  config_log_services ;;
-                    9)  config_health ;;
-                    10) config_ansible ;;
-                    11) config_backups ;;
+                    1)  run config_show ;;
+                    2)  run config_edit ;;
+                    3)  run config_env ;;
+                    4)  run config_env_edit ;;
+                    5)  run config_threshold ;;
+                    6)  run config_interval ;;
+                    7)  run config_ssl_domains ;;
+                    8)  run config_log_services ;;
+                    9)  run config_health ;;
+                    10) run config_ansible ;;
+                    11) run config_backups ;;
                     *) warn "неизвестный выбор" ;;
                 esac
                 ;;
@@ -930,10 +1032,10 @@ interactive_menu() {
                 echo "  1) psql    2) размер таблиц    3) дамп    4) sql запрос"
                 read -rp "  выбор: " act
                 case "$act" in
-                    1) db_shell ;;
-                    2) db_sizes ;;
-                    3) db_dump ;;
-                    4) db_query ;;
+                    1) run db_shell ;;
+                    2) run db_sizes ;;
+                    3) run db_dump ;;
+                    4) run db_query ;;
                     *) warn "неизвестный выбор" ;;
                 esac
                 ;;
@@ -942,10 +1044,10 @@ interactive_menu() {
                 echo "  1) статус    2) логи    3) перезапуск    4) пересборка"
                 read -rp "  выбор: " act
                 case "$act" in
-                    1) stack_status ;;
-                    2) stack_logs ;;
-                    3) stack_restart ;;
-                    4) stack_rebuild ;;
+                    1) run stack_status ;;
+                    2) run stack_logs ;;
+                    3) run stack_restart ;;
+                    4) run stack_rebuild ;;
                     *) warn "неизвестный выбор" ;;
                 esac
                 ;;
