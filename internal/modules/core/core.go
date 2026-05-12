@@ -7,6 +7,7 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
+	"github.com/WELIZARY/tgOps/internal/menu"
 	"github.com/WELIZARY/tgOps/internal/modules"
 	"github.com/WELIZARY/tgOps/internal/storage"
 )
@@ -38,6 +39,11 @@ func (m *Module) Commands() []modules.BotCommand {
 			Description: "Список доступных команд",
 			MinRole:     storage.RoleViewer,
 		},
+		{
+			Command:     "/menu",
+			Description: "Открыть постоянное меню с разделами",
+			MinRole:     storage.RoleViewer,
+		},
 	}
 }
 
@@ -47,6 +53,8 @@ func (m *Module) Handle(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbotapi
 		return m.handleStart(bot, msg, storage.UserFromContext(ctx))
 	case "help":
 		return m.handleHelp(bot, msg, storage.UserFromContext(ctx))
+	case "menu":
+		return m.handleMenu(bot, msg)
 	}
 	return nil
 }
@@ -58,12 +66,22 @@ func (m *Module) handleStart(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, user *
 	}
 
 	text := fmt.Sprintf(
-		"Привет, %s!\n\nДобро пожаловать в *tgOPS*.\nВаша роль: `%s`\n\nИспользуйте /help для просмотра доступных команд.",
+		"Привет, %s!\n\nДобро пожаловать в *tgOPS*.\nВаша роль: `%s`\n\nМеню разделов уже прикреплено. /help — текстовый список команд.",
 		name, user.Role,
 	)
 
 	reply := tgbotapi.NewMessage(msg.Chat.ID, text)
 	reply.ParseMode = tgbotapi.ModeMarkdown
+	// сразу прикрепляем главное меню
+	reply.ReplyMarkup = menu.MainKeyboard()
+	_, err := bot.Send(reply)
+	return err
+}
+
+// handleMenu возвращает пользователя в главное меню (если он его скрыл)
+func (m *Module) handleMenu(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) error {
+	reply := tgbotapi.NewMessage(msg.Chat.ID, "🏠 главное меню")
+	reply.ReplyMarkup = menu.MainKeyboard()
 	_, err := bot.Send(reply)
 	return err
 }
