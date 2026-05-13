@@ -41,6 +41,13 @@ type WebhookConfig struct {
 	Port     int    `mapstructure:"port"`
 	CertPath string `mapstructure:"cert_path"`
 	KeyPath  string `mapstructure:"key_path"`
+	// Secret - значение X-Telegram-Bot-Api-Secret-Token. Также используется в path /webhook/<secret>.
+	// Можно задать через TGOPS_TELEGRAM_WEBHOOK_SECRET.
+	Secret string `mapstructure:"secret"`
+	// AlertSecret - Bearer-токен для /internal/alert от Cloud Monitoring.
+	// JenkinsSecret - X-Jenkins-Secret для /internal/jenkins.
+	AlertSecret   string `mapstructure:"alert_secret"`
+	JenkinsSecret string `mapstructure:"jenkins_secret"`
 }
 
 // DatabaseConfig - настройки PostgreSQL
@@ -244,6 +251,9 @@ func Load(path string) (*Config, error) {
 
 	// Явный биндинг секретных переменных
 	_ = v.BindEnv("telegram.token", "TGOPS_TELEGRAM_TOKEN")
+	_ = v.BindEnv("telegram.webhook.secret", "TGOPS_TELEGRAM_WEBHOOK_SECRET")
+	_ = v.BindEnv("telegram.webhook.alert_secret", "TGOPS_TELEGRAM_ALERT_SECRET")
+	_ = v.BindEnv("telegram.webhook.jenkins_secret", "TGOPS_TELEGRAM_JENKINS_SECRET")
 	_ = v.BindEnv("database.primary.password", "TGOPS_DATABASE_PRIMARY_PASSWORD")
 	_ = v.BindEnv("database.replica.password", "TGOPS_DATABASE_REPLICA_PASSWORD")
 
@@ -269,6 +279,18 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Telegram.InitialAdminID == 0 {
 		return fmt.Errorf("telegram.initial_admin_id не задан")
+	}
+	// дефолты и валидация webhook-режима
+	if cfg.Telegram.Mode == "" {
+		cfg.Telegram.Mode = "polling"
+	}
+	if cfg.Telegram.Mode == "webhook" {
+		if cfg.Telegram.Webhook.Port == 0 {
+			cfg.Telegram.Webhook.Port = 8080
+		}
+		if cfg.Telegram.Webhook.Secret == "" {
+			return fmt.Errorf("telegram.webhook.secret обязателен в режиме webhook")
+		}
 	}
 	if cfg.Database.Primary.Host == "" {
 		return fmt.Errorf("database.primary.host не задан")
