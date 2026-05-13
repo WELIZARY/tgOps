@@ -6,12 +6,18 @@
 telegram:
   token: ""  # берётся из TGOPS_TELEGRAM_TOKEN в .env
   initial_admin_id: 123456789
-  mode: "polling"
+  mode: "polling"            # "polling" для локалки, "webhook" для прода за LB
   webhook:
-    url: "https://yourdomain.com/webhook"
-    port: 8443
-    cert_path: ""
+    # внешний URL за LB; используется только для setWebhook, сам бот его не читает
+    url: "https://bot.tgops.xyz"
+    port: 8080
+    cert_path: ""            # пусто = слушаем HTTP, TLS терминируется на LB
     key_path: ""
+    # секрет в path /webhook/<secret> и X-Telegram-Bot-Api-Secret-Token, обязателен в webhook
+    secret: ""               # TGOPS_TELEGRAM_WEBHOOK_SECRET
+    # опционально: для приёма алертов от Cloud Monitoring и Jenkins на тот же порт
+    alert_secret: ""         # TGOPS_TELEGRAM_ALERT_SECRET, пусто = роут /internal/alert выключен
+    jenkins_secret: ""       # TGOPS_TELEGRAM_JENKINS_SECRET, пусто = роут /internal/jenkins выключен
 
 # - База данных PostgreSQL -
 database:
@@ -111,9 +117,9 @@ docker:
   host: "unix:///var/run/docker.sock"
   timeout: "30s"
 
-# - CI/CD webhook приёмник -
+# - CI/CD webhook приёмник (для прямых GitHub/GitLab/Jenkins push-событий) -
 cicd:
-  webhook_port: 8080
+  webhook_port: 8082            # отдельный порт, чтобы не конфликтовать с telegram webhook (8080)
   webhook_secret: "YOUR_WEBHOOK_SECRET"
   notify_chat_id: 123456789
 

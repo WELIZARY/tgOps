@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os/signal"
 	"syscall"
 
@@ -162,8 +163,23 @@ func main() {
 	go sslMod.Checker().Start(ctx)
 	go webhookSrv.Start(ctx, cfg.CICD.WebhookPort)
 
-	log.Info("все модули зарегистрированы, запускаем бота")
-	b.Start(ctx) // блокирует до сигнала завершения
+	log.Info("все модули зарегистрированы, запускаем бота", zap.String("mode", cfg.Telegram.Mode))
+
+	switch cfg.Telegram.Mode {
+	case "webhook":
+		err := b.StartWebhook(ctx, tgbot.WebhookOptions{
+			Addr:          fmt.Sprintf(":%d", cfg.Telegram.Webhook.Port),
+			Secret:        cfg.Telegram.Webhook.Secret,
+			AlertSecret:   cfg.Telegram.Webhook.AlertSecret,
+			JenkinsSecret: cfg.Telegram.Webhook.JenkinsSecret,
+			NotifyChatID:  cfg.Notify.ChatID,
+		})
+		if err != nil {
+			log.Error("webhook-сервер упал", zap.Error(err))
+		}
+	default:
+		b.Start(ctx) // long-polling, по умолчанию для локалки
+	}
 
 	log.Info("tgOPS остановлен")
 }
