@@ -12,6 +12,7 @@ RUN go mod download
 # Копируем исходники и собираем
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build \
+    -trimpath \
     -ldflags="-s -w" \
     -o /tgops \
     ./cmd/tgops
@@ -33,6 +34,10 @@ COPY --from=builder /tgops .
 COPY --chown=tgops:tgops migrations/ ./migrations/
 
 USER tgops
+
+# 8080 - webhook-режим бота (telegram updates + /healthz + /internal/*)
+# 8082 - cicd webhook (github/gitlab/jenkins прямые push-события)
+EXPOSE 8080 8082
 
 ENTRYPOINT ["/app/tgops"]
 CMD ["--config", "/app/config.yaml"]
