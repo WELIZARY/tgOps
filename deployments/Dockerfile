@@ -32,7 +32,8 @@ WORKDIR /app
 # Копируем бинарник и миграции из builder
 COPY --from=builder /tgops .
 COPY --chown=tgops:tgops migrations/ ./migrations/
-COPY --chown=tgops:tgops configs/config.prod.yaml ./config.yaml
+# реальный конфиг монтируется с vm в /app/config.yaml, секреты через env
+COPY --chown=tgops:tgops configs/config.example.yaml ./config.yaml
 
 USER tgops
 
