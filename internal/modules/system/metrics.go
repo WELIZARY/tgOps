@@ -30,8 +30,10 @@ type Metrics struct {
 func Collect(ctx context.Context, c *internalssh.Client, spec internalssh.ServerSpec) *Metrics {
 	m := &Metrics{ServerName: spec.Host}
 
-	// CPU из /proc/stat - кумулятивные значения с момента загрузки
-	out, err := c.Run(ctx, spec, "grep '^cpu ' /proc/stat")
+	// CPU: два снимка /proc/stat с паузой. значения кумулятивные с момента
+	// загрузки, поэтому считаем дельту между снимками - это мгновенная
+	// загрузка, а не средняя за весь аптайм
+	out, err := c.Run(ctx, spec, "grep '^cpu ' /proc/stat; sleep 1; grep '^cpu ' /proc/stat")
 	if err != nil {
 		m.Error = fmt.Errorf("сбор метрик: %w", err)
 		return m
@@ -61,14 +63,42 @@ func Collect(ctx context.Context, c *internalssh.Client, spec internalssh.Server
 	return m
 }
 
-// parseCPUPercent вычисляет % загрузки CPU из строки /proc/stat.
-// Формат: cpu  user nice system idle iowait irq softirq steal ...
-func parseCPUPercent(line string) float64 {
-	fields := strings.Fields(line)
-	if len(fields) < 5 {
+// parseCPUPercent вычисляет % загрузки CPU по двум снимкам строки (мгновенная загрузка, а не средняя за весь аптайм)
+func parseCPUPercent(out string) float64 {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) < 2 {
+		// Запасной вариант: один снимок (среднее с момента загрузки)
+		if len(lines) == 1 {
+			t, idle := cpuTotals(lines[0])
+			if t == 0 {
+				return 0
+			}
+			return (1 - idle/t) * 100
+		}
 		return 0
 	}
-	var total, idle float64
+	t1, i1 := cpuTotals(lines[0])
+	t2, i2 := cpuTotals(lines[len(lines)-1])
+	dt := t2 - t1
+	di := i2 - i1
+	if dt <= 0 {
+		return 0
+	}
+	p := (1 - di/dt) * 100
+	if p < 0 {
+		p = 0
+	}
+	if p > 100 {
+		p = 100
+	}
+	return p
+}
+
+func cpuTotals(line string) (total, idle float64) {
+	fields := strings.Fields(line)
+	if len(fields) < 5 {
+		return 0, 0
+	}
 	for i, f := range fields[1:] {
 		v, err := strconv.ParseFloat(f, 64)
 		if err != nil {
@@ -79,10 +109,7 @@ func parseCPUPercent(line string) float64 {
 			idle = v
 		}
 	}
-	if total == 0 {
-		return 0
-	}
-	return (1 - idle/total) * 100
+	return total, idle
 }
 
 // parseRAM парсит вывод "free -b | grep '^Mem:'".
