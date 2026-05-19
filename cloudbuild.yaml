@@ -1,0 +1,13 @@
+# сборка образа бота через cloud build
+# запуск - gcloud builds submit --config cloudbuild.yaml .
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - europe-west3-docker.pkg.dev/tgops-prod/tgops-images/tgops:latest
+      - -f
+      - deployments/Dockerfile
+      - .
+images:
+  - europe-west3-docker.pkg.dev/tgops-prod/tgops-images/tgops:latest

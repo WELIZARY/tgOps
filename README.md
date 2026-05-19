@@ -266,4 +266,6 @@ docker compose -f deployments/docker-compose.yml logs -f tgops
 #проверяем, что оба контейнера (БД и бот) запущены
 
 docker compose -f deployments/docker-compose.yml ps
+
+...
 ```

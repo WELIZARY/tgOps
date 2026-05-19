@@ -256,6 +256,9 @@ func Load(path string) (*Config, error) {
 	_ = v.BindEnv("telegram.webhook.jenkins_secret", "TGOPS_TELEGRAM_JENKINS_SECRET")
 	_ = v.BindEnv("database.primary.password", "TGOPS_DATABASE_PRIMARY_PASSWORD")
 	_ = v.BindEnv("database.replica.password", "TGOPS_DATABASE_REPLICA_PASSWORD")
+	// host БД известен только после поднятия Cloud SQL
+	_ = v.BindEnv("database.primary.host", "TGOPS_DATABASE_PRIMARY_HOST")
+	_ = v.BindEnv("database.replica.host", "TGOPS_DATABASE_REPLICA_HOST")
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("чтение конфига %q: %w", path, err)
