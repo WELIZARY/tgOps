@@ -177,8 +177,13 @@ func (m *Module) handleList(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbo
 
 	var table strings.Builder
 	for _, s := range servers {
-		fmt.Fprintf(&table, "%-16s  port %-5d  user %-12s  key %s\n",
-			s.Host, s.Port, s.SSHUser, s.KeyName)
+		// показываем имя сервера, host вторым столбцом
+		name := s.Name
+		if name == "" {
+			name = s.Host
+		}
+		fmt.Fprintf(&table, "%-14s  %-15s  port %-5d  user %s\n",
+			name, s.Host, s.Port, s.SSHUser)
 	}
 
 	header := formatter.Bold(fmt.Sprintf("Серверы (%d)", len(servers))) + "\n\n"
