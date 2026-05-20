@@ -152,9 +152,12 @@ func (m *Module) handleHealth(ctx context.Context, bot *tgbotapi.BotAPI, msg *tg
 		wg.Add(1)
 		go func(idx int, s *storage.Server) {
 			defer wg.Done()
+			// per-node таймаут: одна зависшая нода не должна тормозить весь /health
+			cctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+			defer cancel()
 			results[idx] = result{
 				name:    s.Name,
-				metrics: Collect(ctx, m.ssh, internalssh.SpecFromServer(s)),
+				metrics: Collect(cctx, m.ssh, internalssh.SpecFromServer(s)),
 			}
 		}(i, srv)
 	}
