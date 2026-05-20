@@ -58,6 +58,7 @@ var MainMenu = []Item{
 			{Label: "/ping", Command: "/ping"},
 			{Label: "/traceroute", Command: "/traceroute"},
 			{Label: "/nslookup", Command: "/nslookup"},
+			{Label: "/endpoints", Command: "/endpoints"},
 		},
 	},
 	{
