@@ -11,6 +11,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"go.uber.org/zap"
 
+	"github.com/WELIZARY/tgOps/internal/config"
 	"github.com/WELIZARY/tgOps/internal/formatter"
 	"github.com/WELIZARY/tgOps/internal/modules"
 	internalssh "github.com/WELIZARY/tgOps/internal/ssh"
@@ -27,12 +28,14 @@ var validHost = regexp.MustCompile(`^[a-zA-Z0-9.\-]+$`)
 type Module struct {
 	sshClient *internalssh.Client
 	src       internalssh.ServerSource
+	hcCfg     *config.HealthChecksConfig
 	log       *zap.Logger
 }
 
-// New создаёт модуль сетевых утилит
-func New(sshClient *internalssh.Client, src internalssh.ServerSource, log *zap.Logger) *Module {
-	return &Module{sshClient: sshClient, src: src, log: log}
+// New создаёт модуль сетевых утилит. hcCfg нужен только для команды /endpoints
+// (показать список HTTP-чеков и их периодичность).
+func New(sshClient *internalssh.Client, src internalssh.ServerSource, hcCfg *config.HealthChecksConfig, log *zap.Logger) *Module {
+	return &Module{sshClient: sshClient, src: src, hcCfg: hcCfg, log: log}
 }
 
 func (m *Module) Name() string { return "network" }
@@ -42,6 +45,7 @@ func (m *Module) Commands() []modules.BotCommand {
 		{Command: "/ping", Description: "ping <хост> [from <сервер>] - проверка доступности", MinRole: "viewer"},
 		{Command: "/traceroute", Description: "traceroute <хост> [from <сервер>] - маршрут до хоста", MinRole: "viewer"},
 		{Command: "/nslookup", Description: "nslookup <хост> [from <сервер>] - DNS-запрос", MinRole: "viewer"},
+		{Command: "/endpoints", Description: "список HTTP-чеков бота и периодичность", MinRole: "viewer"},
 	}
 }
 
@@ -53,8 +57,38 @@ func (m *Module) Handle(ctx context.Context, bot *tgbotapi.BotAPI, msg *tgbotapi
 		return m.run(ctx, bot, msg, "traceroute", []string{"-m", "15"}, 60*time.Second, true)
 	case "nslookup":
 		return m.run(ctx, bot, msg, "nslookup", nil, 15*time.Second, false)
+	case "endpoints":
+		return m.handleEndpoints(bot, msg)
 	}
 	return nil
+}
+
+// handleEndpoints показывает настроенные HTTP-чеки бота (имя, url, ожидаемый
+// код) и периодичность проверки. Сами проверки гоняет фоновый сборщик.
+func (m *Module) handleEndpoints(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) error {
+	if m.hcCfg == nil || len(m.hcCfg.Endpoints) == 0 {
+		return replyText(bot, msg.Chat.ID, "HTTP-чеки не настроены в health_checks.endpoints.")
+	}
+	interval := m.hcCfg.Interval
+	if interval == "" {
+		interval = "60s"
+	}
+	timeout := m.hcCfg.Timeout
+	if timeout == "" {
+		timeout = "10s"
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "HTTP-чеки бота\nинтервал %s, таймаут %s, всего %d\n\n",
+		interval, timeout, len(m.hcCfg.Endpoints))
+	for _, ep := range m.hcCfg.Endpoints {
+		code := ep.ExpectedStatus
+		if code == 0 {
+			code = 200
+		}
+		fmt.Fprintf(&sb, "%-20s %s  [%d]\n", ep.Name, ep.URL, code)
+	}
+	return replyPre(bot, msg.Chat.ID, sb.String())
 }
 
 // run - универсальный обработчик. resolveHost: если первый аргумент - имя сервера из

@@ -1,271 +1,238 @@
-# tgOPS
+# tgOps
 
-Telegram-бот для управления и мониторинга серверной инфраструктуры. Позволяет получать алерты, просматривать логи, контейнеры, запускать Ansible-плейбуки - всё прямо Telegram. Бот поможет экстренно среагировать на инциденты, ведь телефон всегда под рукой, можно сформировать картину сбоя еще не добравшись до компьютера.
-
-## Статус реализации
-
-| Модуль                                                    | Статус |
-| --------------------------------------------------------- | ------ |
-| Ядро бота (модель управления доступом, аудит, конфиг)     | ✔      |
-| Мониторинг (CPU, RAM, Disk, LA)                           | ✔      |
-| Алерты о сбоях                                            | ✔      |
-| SSL-сертификаты - проверка сроков                         | ✔      |
-| Сетевые утилиты (ping, traceroute, nslookup)              | ✔      |
-| Доступ к логам сервисов                                   | ✔      |
-| Управление Docker                                         | ✔      |
-| CI/CD уведомления и подтверждение деплоя                  | ✔      |
-| Ansible - запуск плейбуков из whitelist                   | ✔      |
-| Проверка обновлений ПО (apt/yum/dnf)                      | ✔      |
-| Статусы бэкапов                                           | ✔      |
-| Планировщик задач (cron/systemd timers)                   | ✔      |
-| Сканирование уязвимостей (trivy/lynis)                    | ✔      |
-| Проверка версий ключевого ПО                              | ✔      |
-| Bash-скрипт управления инфрой (пользователи, VM, конфиги) | ✔      |
+Telegram-бот на Go для удаленного мониторинга и управления серверной
+инфраструктурой. Метрики, логи, контейнеры, запуск Ansible-плейбуков,
+сканирование уязвимостей, статусы CI/CD и сроки SSL - вс через чат, с
+разграничением прав и журналом действий. Идея: телефон всегда под рукой,
+картину сбоя можно собрать и среагировать ещ до того, как дойдшь до
+рабочего места.
 
 ## Возможности
 
-* Мониторинг серверов: CPU, RAM, диск, Load Average, топ процессов
-* Алерты при превышении пороговых значений с дедупликацией и inline-подтверждением
-* Проверка доступности сервисов и сроков SSL-сертификатов
-* Просмотр логов сервисов через SSH (journalctl + fallback), либо отправка файлом
-* Управление Docker-контейнерами (ps, images, logs)
-* Интеграция с CI/CD: статусы пайплайнов GitHub/GitLab/Jenkins, подтверждение деплоя
-* Запуск Ansible-плейбуков из whitelist с историей запусков в БД
-* Проверка доступных обновлений пакетов (apt/yum/dnf) через SSH
-* Мониторинг статуса резервных копий: последний файл, возраст, размер
-* Просмотр cron-задач и systemd-таймеров на серверах
-* Сканирование уязвимостей: trivy (Docker-образы), lynis (хост), запуск на одном или сразу на всех серверах
-* Проверка версий ПО: docker, ansible, go, nginx, postgres и др.
-* Сетевые утилиты: ping, traceroute, nslookup с резолвингом имён серверов и опцией запуска через SSH с любой машины
-* Разграничение доступа внутри бота (admin / operator / viewer)
-* Лог всех действий через бота
+- Мониторинг серверов: CPU, RAM, диск, средняя нагрузка, топ процессов.
+- Алерты (с дедупликацией) и подтверждением кнопкой прямо в чате.
+- SSL-сертификаты: сроки и авто-уведомления за n-дней.
+- HTTP-чеки эндпоинтов по списку, с интервалом и алертом при падении.
+- Сетевые утилиты: ping, traceroute, nslookup - с контейнера бота, либо
+  через SSH с любого из добавленных серверов.
+- Логи сервисов (длинный вывод файлом).
+- Работа Docker: список контейнеров, образов, логи.
+- CI/CD: события от GitHub, GitLab, Jenkins, апрув деплоя.
+- Ansible: запуск плейбуков из белого списка, история запусков в БД.
+- Доступные обновления пакетов (apt), статусы бэкапов, cron-задачи и
+  systemd-таймеры.
+- Сканирование уязвимостей: lynis для хоста, trivy для docker-образов.
+- Версии ключевого ПО на серверах (docker, compose, python, ядро, ОС).
 
-### Меню с разделами
-
-Постоянное reply-меню прикрепляется к чату при `/start` и видно в "квадратике клавиатуры" у пользователя. Команду `/menu` можно вызвать в любой момент чтобы вернуть его.
-
-Структура двухуровневая:
-
-```
-🏠 главное меню
-├─ 📊 мониторинг      → /status /top /health /list
-├─ 🚨 алерты          → /alerts /ssl
-├─ 🌐 сеть            → /ping /traceroute /nslookup
-├─ 📜 логи            → /logs
-├─ 🐳 docker          → /docker ps /docker images /docker logs
-├─ 🔧 ci/cd           → /pipelines
-├─ ⚙ ansible          → /ansible playbooks /ansible run /ansible status
-├─ 🛠 обслуживание    → /updates /backups /cron /scan /versions
-└─ ❓ помощь          → /help
-```
-
-В подменю всегда есть кнопка `⬅ назад` для возврата в главное меню.
-
-### Inline-кнопки выбора
-
-После запуска команды бот часто показывает inline-кнопки прямо под сообщением:
-
-* `/status`, `/top`, `/updates`, `/backups`, `/versions` - кнопки серверов
-* `/cron` - двухуровневое: выбор подкоманды (list/timers) → выбор сервера
-* `/scan` - двухуровневое: host/image → сервер (есть кнопка "все серверы")
-* `/alerts` - у каждого алерта кнопка подтверждения
-* `/pipelines` - у каждого деплоя кнопки approve/reject
-
-Если знаешь имя - пишешь сразу `/status k8s-c2`, кнопки не нужны. Удобно когда не помнишь точные имена.
+14 модулей-плагинов с единым интерфейсом, разграничение прав
+(admin / operator / viewer), полный журнал действий в `audit_log`, хранящийся в БД.
 
 ## Стек
 
-* Golang + go-telegram-bot-api
-* PostgreSQL 16 (primary + replica)
-* GCP (Compute Engine) + VPS + домен
-* Docker, Ansible
-* GitHub Actions (CI/CD), Jenkins
+- Go 1.26+ ([`go-telegram-bot-api/telegram-bot-api`](https://github.com/go-telegram-bot-api/telegram-bot-api) v5)
+- PostgreSQL 16 (основной узел и реплика для чтения)
+- SSH: `golang.org/x/crypto/ssh` (пул соединений)
+- Логи: `uber-go/zap` (структурированный JSON)
+- Хранилище: `jackc/pgx` v5, миграции `golang-migrate`
+- Docker + docker-compose v2
 
-## Структура проекта
+Облачное развртывание этой системы — отдельный репозиторий
+[`tgOps_infra`](https://github.com/WELIZARY/tgOps_infra): модульаный
+Terraform, Ansible-роли, Jenkins-пайплайны, IAP-туннелированный SSH,
+Workload Identity Federation для CI без долгоживущих ключей, Cloud SQL в
+HA + реплика, стек наблюдаемости (Prometheus / Loki /
+Grafana).
+
+## Архитектура
 
 ```
-┌────────────────┐      ┌───────────────────────────────────┐
-│  Telegram      │◄────►│  tgOPS Bot (Go binary)            │
-│  User/Admin    │      │  ├─ Router (command dispatcher)   │
-└────────────────┘      │  ├─ Middleware (RBAC, audit log)  │
-                        │  ├─ Modules (plugins)             │
-                        │  └─ Config (YAML)                 │
-                        └───────────────┬───────────────────┘
-                                        │
-              ┌─────────────────────────┼─────────────────────────┐
-              ▼                         ▼                         ▼
-┌────────────────┐      ┌────────────────┐      ┌────────────────┐
-│  PostgreSQL    │      │  VPS / GCP VM  │      │  CI/CD         │
-│  primary +     │      │  SSH/API       │      │  GitHub Actions│
-│  replica       │      │  Docker        │      │  GitLab CI     │
-└────────────────┘      │  systemd       │      │  Jenkins       │
-                        └────────────────┘      └────────────────┘
+       ┌───────────┐        ┌─────────────────────────────────────────┐
+       │ Telegram  │ <----> │ tgOPS Bot (Go)                          │
+       │ user/admin│        │   Router (диспетчер команд)             │
+       └───────────┘        │   Middleware (RBAC + audit_log)         │
+                            │   Modules (14 плагинов, единый интерф.) │
+                            │   Config (YAML, поздняя инъекция сикр.) │
+                            └─────┬──────────────────────┬────────────┘
+                                  │ SSH (pool)           │ pgx
+                                  v                      v
+                       ┌────────────────────┐   ┌────────────────────┐
+                       │ Managed servers    │   │ PostgreSQL 16      │
+                       │ docker/systemd     │   │ primary + replica  │
+                       │ /proc, journalctl  │   │ users, audit,      │
+                       └────────────────────┘   │ alerts, pipelines  │
+                                                └────────────────────┘
 ```
 
-## Требования
+## Меню
 
-* Go 1.26+
-* Docker 20+
-* Docker Compose v2
-* Git
-* Make (опционально)
-* Ansible (для модуля /ansible - должен быть установлен на хосте с ботом)
+Reply-меню прикрепляется к чату на `/start` и доступно кнопкой
+клавиатуры. Двухуровневое:
+
+```
+🏠 главное меню
+├ 📊 мониторинг      /status  /top  /health  /list
+├ 🚨 алерты          /alerts  /ssl
+├ 🌐 сеть            /ping  /traceroute  /nslookup  /endpoints
+├ 📜 логи            /logs
+├ 🐳 docker          /docker ps  /docker images  /docker logs
+├ 🔧 ci/cd           /pipelines
+├ ⚙ ansible          /ansible playbooks  /ansible run  /ansible status
+├ 🛠 обслуживание    /updates  /backups  /cron  /scan  /versions
+└ ❓ помощь          /help
+```
+
+Если имя сервера известно — пишешь команду напрямую (`/status vps-prod`).
+Без аргумента команды выводят inline-кнопки выбора (или подкоманды для
+`/cron`, `/scan`).
+
+## Быстрый старт (локально)
+
+Требуется Go 1.26+, Docker 20+, Docker Compose v2.
 
 ```bash
-# проверяем что всё на месте
-go version          # go1.26 или выше
-docker --version    # Docker 20+
-docker compose version  # v2.x
-git --version
-make --version      # опционально
-ansible --version   # опционально, только для модуля /ansible
-
-# установка 
-
-# go (если нет или версия старая)
-# актуальную ссылку бери на https://go.dev/dl/
-wget https://go.dev/dl/go1.26.2.linux-amd64.tar.gz
-sudo rm -rf /usr/local/go
-sudo tar -C /usr/local -xzf go1.26.2.linux-amd64.tar.gz
-echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
-source ~/.bashrc
-
-# docker + compose
-sudo apt update
-sudo apt install -y ca-certificates curl gnupg
-sudo install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-  https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | \
-  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-sudo apt update
-sudo apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
-
-# добавляем текущего пользователя в группу docker (чтобы без sudo)
-sudo usermod -aG docker $USER
-newgrp docker
-
-# make
-sudo apt install -y make
-
-# ansible (если нужен модуль /ansible)
-sudo apt install -y ansible
-```
-
-## Первоначальная настройка
-
-```bash
-#Клонируем репозиторий
 git clone https://github.com/welizary/tgops.git
 cd tgops
 
-#Создаем конфигурационные файлы
-cp .env.example .env
+cp .env.example .env                              # токен бота, пароль БД
 cp configs/config.example.yaml configs/config.yaml
 mkdir -p keys
 
-#Создаем тг-бота и его токен указываем в .env, там же указываем пароли к БД
-#Узнаем свой айди своего тг-аккаунта
+# создать бота через @BotFather, токен подставить в .env (TGOPS_TELEGRAM_TOKEN)
+# узнать свой Telegram ID через @userinfobot и вписать в config.yaml:
+# telegram.initial_admin_id  и  notify.chat_id
 
-#Генерируем SSH-ключи для серверов
-ssh-keygen -t ed25519 -f keys/vps-name -N "" -C "tgops@vps-name" #так для каждой управляемой машины
+# сгенерировать ключ под управляемый сервер (повторить для каждой VPS)
+ssh-keygen -t ed25519 -f keys/vps-main -N "" -C "tgops@vps-main"
 chmod 600 keys/*
+# публичный ключ положить на сервер через ssh-copy-id или вручную
 
-#Добавляем ключи на управляемый сервер через ssh-copy, либо вручную
+make docker-up                                    # бот + PostgreSQL
+make docker-logs
+```
 
-#Настраиваем config
-nano configs/config.yaml
+Бот должен ответить на `/start` пользователю с указанным
+`initial_admin_id` — он получит роль администратора при первом запуске.
 
-...
+## Конфигурация (минимальный пример)
 
+```yaml
 telegram:
-  token: ""                     # оставляем пустым, токен берётся из TGOPS_TELEGRAM_TOKEN в .env
-  initial_admin_id: 123456789   # вставляем свой Telegram ID (от @userinfobot)
-  mode: "polling"
-
-initial_admin_id - одноразовая конфигурация, дабы присвоить указанному юзеру права администратора
-
-...
+  token: ""                  # из TGOPS_TELEGRAM_TOKEN в .env
+  initial_admin_id: 123456789
+  mode: polling              # webhook в проде за балансировщиком
 
 database:
   primary:
-    host: "postgres"   # именно "postgres" для Docker Compose, не localhost
+    host: postgres
     port: 5432
-    user: "tgops"
-    password: ""       # оставляем пустым - берётся из .env
-    name: "tgops"
-    ssl_mode: "disable"
+    user: tgops
+    name: tgops
+    password: ""             # из TGOPS_DATABASE_PRIMARY_PASSWORD
 
 ssh:
-  keys_dir: "keys"
-  default_key_path: ""
-  connect_timeout: "10s"
-  command_timeout: "30s"
-  max_connections_per_host: 3
+  keys_dir: keys
   servers:
-    - name: "vps-test"      # произвольное имя, будет использоваться в командах бота
-      host: "1.2.3.4"       # реальный IP сервера
+    - name: vps-main
+      host: 1.2.3.4
       port: 22
-      user: "ubuntu"        # SSH-пользователь на сервере
-      key_name: "vps-main"  # имя файла в папке keys/
-
-...
+      user: deploy
+      key_name: vps-main
 
 notify:
-  chat_id: 123456789   # свой Telegram ID - алерты будут приходить сюда
-
-cicd:
-  webhook_port: 8080         # порт для входящих webhook от GitHub/GitLab/Jenkins
-  webhook_secret: "secret"   # HMAC-ключ, указать в настройках webhook на стороне CI
-  notify_chat_id: 123456789  # chat_id для уведомлений о деплоях
-
-...
+  chat_id: 123456789
 
 monitoring:
-  interval: "60s"      # как часто опрашивать серверы
+  interval: 60s
   thresholds:
-    cpu_warning: 80    # % CPU для предупреждения
-    cpu_critical: 90   # % CPU для критического алерта
-    ram_warning: 75
+    cpu_critical: 90
     ram_critical: 85
-    disk_warning: 80
     disk_critical: 90
-  alert_cooldown: "10m"  # не слать повторный алерт чаще чем раз в 10 минут
+  alert_cooldown: 10m
+
+ssl:
+  warn_days: [30, 14, 7, 1]
+  domains: [example.com]
+
+health_checks:
+  interval: 60s
+  endpoints:
+    - { name: site, url: https://example.com, expected_status: 200 }
 ```
 
-## Управление через скрипт
+Полный пример со всеми секциями — `configs/config.example.yaml`.
 
-В `scripts/tgops-ctl.sh` лежит интерактивный скрипт для управления проектом - пользователи, серверы, алерты, конфигурация, БД и docker-стек. Все изменения подхватываются ботом автоматически, перезапуск контейнера не нужен.
+## Управление через CLI-скрипт
+
+`scripts/tgops-ctl.sh` — интерактивный скрипт для повседневной
+эксплуатацией: пользователи, серверы, алерты, конфигурация, БД и
+docker-стек.
 
 ```bash
-# интерактивное меню
-./scripts/tgops-ctl.sh
-
-# или прямой вызов команды
+./scripts/tgops-ctl.sh                       # интерактивное меню
 ./scripts/tgops-ctl.sh user:add
-./scripts/tgops-ctl.sh server:add        # добавит сервер в БД + сгенерирует ssh-ключ
+./scripts/tgops-ctl.sh server:add            # добавит сервер в БД и
+                                              # сгенерирует SSH-ключ
 ./scripts/tgops-ctl.sh alert:unacked
-./scripts/tgops-ctl.sh config:threshold  # пороги мониторинга
+./scripts/tgops-ctl.sh config:threshold      # пороги мониторинга
 ./scripts/tgops-ctl.sh db:dump
-./scripts/tgops-ctl.sh help              # полный список команд
+./scripts/tgops-ctl.sh help                  # полный список команд
 ```
 
-Серверы можно хранить в двух местах: статичные - в `configs/config.yaml` (правим вручную, версионируем в git), динамичные - в БД (управляем через скрипт). Бот объединяет оба источника на лету.
+Серверы можно хранить в двух местах: статично в `configs/config.yaml`
+(под git, для известных хостов) или динамически в таблице `servers`
+(через скрипт). Бот объединяет оба источника.
 
-## Запуск
+## Структура репозитория
 
 ```
-make docker-up
-#или вручную
-docker compose -f deployments/docker-compose.yml up -d --build
-
-make docker-logs
-#или
-docker compose -f deployments/docker-compose.yml logs -f tgops
-
-#проверяем, что оба контейнера (БД и бот) запущены
-
-docker compose -f deployments/docker-compose.yml ps
-
-...
+tgops/
+├── cmd/tgops/main.go               # точка входа в приложение, сборка модулей
+├── internal/
+│   ├── bot/                        # маршрутизатор, RBAC, аудит, меню
+│   ├── config/                     # парсер YAML
+│   ├── storage/                    # репозитории на pgx
+│   ├── ssh/                        # SSH-клиент с пулом соединений
+│   ├── modules/                    # 14 модулей-плагинов
+│   │   ├── system/                 # /status /top /health /list
+│   │   ├── alerts/                 # фоновый сбор и алерт-менеджер
+│   │   ├── ssl/                    # проверка сертификатов
+│   │   ├── network/                # ping/traceroute/nslookup/endpoints
+│   │   ├── logs/                   # journalctl по SSH
+│   │   ├── docker/                 # docker ps/images/logs
+│   │   ├── cicd/                   # webhook GitHub/GitLab/Jenkins
+│   │   ├── ansible/                # запуск плейбуков
+│   │   ├── updates/                # apt-обновления
+│   │   ├── backups/                # актуальность бэкапов
+│   │   ├── cron/                   # crontab и systemd-таймеры
+│   │   ├── scan/                   # trivy + lynis
+│   │   ├── versions/               # версии ПО
+│   │   └── core/                   # /start /menu /help
+│   ├── audit/                      # запись действий в audit_log
+│   └── formatter/                  # форматирование Telegram-сообщений
+├── migrations/                     # SQL-миграции схемы
+├── configs/config.example.yaml     # пример конфига со всеми секциями
+├── deployments/                    # Dockerfile, docker-compose
+└── scripts/
+    └── tgops-ctl.sh                # CLI управления
 ```
+
+## Безопасность
+
+- Разграничение доступа на 3 роли (admin / operator / viewer); проверка
+  до запуска обработчика.
+- Все действия и отказы (`denied`) пишутся в `audit_log` с
+  длительностью.
+- SSH к управляемым серверам - по приватным ключам, перечень разрешнных
+  сервисов журналов и плейбуков ansible (белыми списками), пользовательский
+  ввод не попадает в напрямую.
+- Секреты не хранятся в репозитории и не вшиваются в образ. В рантайме
+  токен Telegram, пароль БД и SSH-ключ доставляются как переменные
+  окружения / монтируются файлами.
+
+## Развртывание в облаке
+
+Пример прод-инфраструктуры с разделенным CI/CD, HA-базой, IAP-доступом
+и собственной наблюдаемостью лежит в отдельном репозитории
+[`WELIZARY/tgOps_infra`](https://github.com/WELIZARY/tgOps_infra). Бот и
+инфра связаны «образ в Artifact Registry + git-sha» - CI
+бота проверяет, собирает и публикует образ, CD из инфра-репо его разворачивает.

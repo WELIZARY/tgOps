@@ -118,7 +118,7 @@ func main() {
 	systemMod := system.New(sshClient, serverSrc, cfg, log)
 	alertsMod := alerts.New(alertRepo, log)
 	sslMod := ssl.New(&cfg.SSL, sslRepo, alertMgr, log)
-	networkMod := network.New(sshClient, serverSrc, log)
+	networkMod := network.New(sshClient, serverSrc, &cfg.HealthChecks, log)
 	logsMod := logs.New(sshClient, serverSrc, &cfg.Logs, log)
 	dockerMod := docker.New(sshClient, serverSrc, &cfg.Docker, log)
 	cicdMod := cicd.New(pipelineRepo, cicdNotifier, log)
